@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>three.js — WoW walk</title>
+    <meta
+      name="viewport"
+      content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0"
+    />
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #5e5d5d;
+        font-family: ui-sans-serif, system-ui, sans-serif;
+      }
+      #container {
+        width: 100%;
+        height: 100%;
+      }
+      #info {
+        position: absolute;
+        top: 12px;
+        left: 12px;
+        right: 12px;
+        color: #eee;
+        font-size: 13px;
+        line-height: 1.45;
+        text-shadow: 0 1px 2px #000;
+        pointer-events: none;
+        user-select: none;
+      }
+      #info a {
+        color: #f88;
+        pointer-events: auto;
+      }
+      kbd {
+        display: inline-block;
+        padding: 0 4px;
+        border: 1px solid #888;
+        border-radius: 3px;
+        font-size: 11px;
+        background: rgba(0, 0, 0, 0.35);
+      }
+    </style>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <div id="container"></div>
+    <div id="info">
+      <a href="https://threejs.org/examples/#webgl_animation_walk" target="_blank" rel="noopener"
+        >three.js walk</a
+      >
+      world + Soldier (mixamo) — Idle/Run, WoW-style controls<br />
+      <kbd>W</kbd>/<kbd>S</kbd> move · <kbd>Q</kbd>/<kbd>E</kbd> strafe ·
+      <kbd>A</kbd>/<kbd>D</kbd> turn · <kbd>LMB</kbd> look · <kbd>RMB</kbd> look+steer ·
+      wheel zoom · <kbd>Space</kbd> jump
+    </div>
+    <script type="module" src="./js/main.js"></script>
+  </body>
+</html>
