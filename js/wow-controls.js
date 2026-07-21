@@ -141,9 +141,10 @@ export class WowControls {
     this.deltaX = 0;
     this.deltaY = 0;
 
-    // RMB drag steers facing with the camera.
+    // RMB drag steers facing with the camera. Camera yaw is π behind the
+    // character's Mixamo +Z facing, so keep that offset when locking them.
     if (this.rmb) {
-      this.facing = this.yaw;
+      this.facing = this.yaw + Math.PI;
     }
 
     // A/D turn unless RMB (then A/D strafe with movement).
