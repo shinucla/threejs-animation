@@ -134,9 +134,6 @@ function loadModel() {
   loader.load('assets/models/Soldier.glb', (gltf) => {
     model = gltf.scene;
     group.add(model);
-    // Model faces +Z in the glTF; WoW facing 0 looks toward -Z in our convention,
-    // so rotate the mesh 180° so Idle/Run face movement direction.
-    model.rotation.y = PI;
 
     model.traverse((object) => {
       if (!object.isMesh) return;
