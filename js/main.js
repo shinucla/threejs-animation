@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
 import { WowControls } from './wow-controls.js';
 
@@ -11,6 +12,11 @@ let scene, renderer, camera, floor, clock;
 let group, followGroup, model, mixer;
 let actions, currentAction = 'Idle';
 let controls;
+
+/** Mixamo jump plays on its own embedded Vanguard — no retarget. */
+let jumpModel = null;
+let jumpMixer = null;
+let jumpAction = null;
 
 init();
 
@@ -129,29 +135,32 @@ function addFloor() {
   floor.add(bulbLight);
 }
 
+function styleVanguardMaterials(root) {
+  root.traverse((object) => {
+    if (!object.isMesh) return;
+    if (object.name === 'vanguard_Mesh') {
+      object.castShadow = true;
+      object.receiveShadow = true;
+      object.material.metalness = 1.0;
+      object.material.roughness = 0.2;
+      object.material.color.set(1, 1, 1);
+      if (object.material.map) object.material.metalnessMap = object.material.map;
+    } else {
+      object.material.metalness = 1;
+      object.material.roughness = 0;
+      object.material.transparent = true;
+      object.material.opacity = 0.8;
+      object.material.color.set(1, 1, 1);
+    }
+  });
+}
+
 function loadModel() {
   const loader = new GLTFLoader();
   loader.load('assets/models/Soldier.glb', (gltf) => {
     model = gltf.scene;
     group.add(model);
-
-    model.traverse((object) => {
-      if (!object.isMesh) return;
-      if (object.name === 'vanguard_Mesh') {
-        object.castShadow = true;
-        object.receiveShadow = true;
-        object.material.metalness = 1.0;
-        object.material.roughness = 0.2;
-        object.material.color.set(1, 1, 1);
-        object.material.metalnessMap = object.material.map;
-      } else {
-        object.material.metalness = 1;
-        object.material.roughness = 0;
-        object.material.transparent = true;
-        object.material.opacity = 0.8;
-        object.material.color.set(1, 1, 1);
-      }
-    });
+    styleVanguardMaterials(model);
 
     mixer = new THREE.AnimationMixer(model);
 
@@ -176,11 +185,74 @@ function loadModel() {
 
     actions.Idle.play();
     currentAction = 'Idle';
+    loadJumpModel();
   });
 }
 
-function crossFadeTo(next) {
-  if (!actions || currentAction === next) return;
+/**
+ * Load Mixamo jump with embedded Vanguard skin. On jump we swap visibility to
+ * this model and play the clip natively (correct bind — no retarget).
+ *
+ * scale 0.01 + yaw π matches Soldier.glb hips/head under Character.
+ * Quaternion tracks only; WowControls owns jump height.
+ */
+function loadJumpModel() {
+  new FBXLoader().load('assets/animations/mixamo-jump-with-skin.fbx', (fbx) => {
+    const raw = fbx.animations[0];
+    if (!raw) return;
+
+    fbx.traverse((obj) => {
+      if (obj.name) obj.name = THREE.PropertyBinding.sanitizeNodeName(obj.name);
+    });
+
+    let mesh = null;
+    fbx.traverse((obj) => {
+      if (obj.isSkinnedMesh && obj.name === 'vanguard_Mesh') mesh = obj;
+    });
+    if (!mesh?.skeleton) return;
+
+    mesh.skeleton.pose();
+    fbx.updateMatrixWorld(true);
+
+    fbx.scale.setScalar(0.01);
+    fbx.rotation.y = Math.PI; // Mixamo +Z forward → Soldier −Z forward
+    fbx.visible = false;
+    styleVanguardMaterials(fbx);
+    group.add(fbx);
+    jumpModel = fbx;
+
+    jumpMixer = new THREE.AnimationMixer(fbx);
+
+    const jumpClip = new THREE.AnimationClip(
+      'Jump',
+      raw.duration,
+      raw.tracks.filter((track) => track.name.endsWith('.quaternion')),
+    );
+
+    jumpAction = jumpMixer.clipAction(jumpClip);
+    jumpAction.setLoop(THREE.LoopOnce, 1);
+    jumpAction.clampWhenFinished = true;
+  });
+}
+
+function showSoldier() {
+  if (model) model.visible = true;
+  if (jumpModel) jumpModel.visible = false;
+  if (jumpAction) {
+    jumpAction.stop();
+    jumpAction.setEffectiveWeight(0);
+  }
+}
+
+function showJumpModel() {
+  if (model) model.visible = false;
+  if (jumpModel) jumpModel.visible = true;
+}
+
+function crossFadeTo(next, fade = FADE) {
+  if (!actions?.[next] || currentAction === next) return;
+
+  if (currentAction === 'Jump') showSoldier();
 
   const current = actions[currentAction];
   const target = actions[next];
@@ -189,7 +261,22 @@ function crossFadeTo(next) {
   target.reset();
   target.setEffectiveWeight(1);
   target.play();
-  current.crossFadeTo(target, FADE, true);
+  if (current && current !== jumpAction) current.crossFadeTo(target, fade, true);
+}
+
+function playJump() {
+  if (!jumpAction || !jumpModel) return;
+
+  for (const action of Object.values(actions)) {
+    action.stop();
+    action.setEffectiveWeight(0);
+  }
+
+  showJumpModel();
+  jumpAction.reset();
+  jumpAction.setEffectiveWeight(1);
+  jumpAction.play();
+  currentAction = 'Jump';
 }
 
 function updateCharacter(delta) {
@@ -197,8 +284,11 @@ function updateCharacter(delta) {
 
   controls.update(delta);
 
-  const play = controls.moving ? 'Run' : 'Idle';
-  crossFadeTo(play);
+  if (controls.justJumped && jumpAction) {
+    playJump();
+  } else if (!(currentAction === 'Jump' && !controls.onGround)) {
+    crossFadeTo(controls.moving ? 'Run' : 'Idle', currentAction === 'Jump' ? 0.15 : FADE);
+  }
 
   group.position.set(controls.position.x, controls.position.y, controls.position.z);
   group.rotation.y = controls.facing;
@@ -218,6 +308,7 @@ function updateCharacter(delta) {
   }
 
   if (mixer) mixer.update(delta);
+  if (jumpMixer) jumpMixer.update(delta);
 }
 
 function onWindowResize() {

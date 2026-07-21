@@ -37,6 +37,8 @@ export class WowControls {
     this.velocityY = 0;
     this.onGround = true;
     this.moving = false;
+    /** True for the update() that starts a jump (space while grounded). */
+    this.justJumped = false;
 
     this.keys = new Set();
     this.lmb = false;
@@ -193,9 +195,11 @@ export class WowControls {
       }
     }
 
+    this.justJumped = false;
     if (this.keys.has('Space') && this.onGround) {
       this.velocityY = this.jumpSpeed;
       this.onGround = false;
+      this.justJumped = true;
     }
 
     if (this.onGround) {
