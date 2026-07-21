@@ -39,6 +39,10 @@ export class WowControls {
     this.moving = false;
     /** True for the update() that starts a jump (space while grounded). */
     this.justJumped = false;
+    /** Stance: 'stand' | 'crouch' | 'prone' */
+    this.stance = 'stand';
+    this.crouchSpeedScale = options.crouchSpeedScale ?? 0.45;
+    this.proneSpeedScale = options.proneSpeedScale ?? 0.2;
 
     this.keys = new Set();
     this.lmb = false;
@@ -49,6 +53,8 @@ export class WowControls {
     this.deltaY = 0;
     this.scrollY = 0;
     this.hasPointer = false;
+    /** When false, update() skips input and movement (other modes own the canvas). */
+    this.enabled = true;
 
     this._onKeyDown = this._onKeyDown.bind(this);
     this._onKeyUp = this._onKeyUp.bind(this);
@@ -105,6 +111,15 @@ export class WowControls {
   }
 
   update(dt) {
+    if (!this.enabled) {
+      this.justJumped = false;
+      this.deltaX = 0;
+      this.deltaY = 0;
+      this.scrollY = 0;
+      this.keys.clear();
+      return;
+    }
+
     if (dt > 0.05) dt = 0.05;
 
     if (this.scrollY !== 0) {
@@ -143,8 +158,9 @@ export class WowControls {
     }
 
     const facing = this.facing;
-    const forward = { x: -Math.sin(facing), z: -Math.cos(facing) };
-    const right = { x: Math.cos(facing), z: -Math.sin(facing) };
+    // Match Mixamo +Z forward (facing 0 → walk +Z). Right-handed strafe.
+    const forward = { x: Math.sin(facing), z: Math.cos(facing) };
+    const right = { x: -Math.cos(facing), z: Math.sin(facing) };
 
     let moveX = 0;
     let moveZ = 0;
@@ -185,9 +201,15 @@ export class WowControls {
       }
 
       const len = Math.hypot(moveX, moveZ);
+      const speedScale =
+        this.stance === 'prone'
+          ? this.proneSpeedScale
+          : this.stance === 'crouch'
+            ? this.crouchSpeedScale
+            : 1;
       if (len > 1e-6) {
-        this.velocityX = (moveX / len) * this.walkSpeed;
-        this.velocityZ = (moveZ / len) * this.walkSpeed;
+        this.velocityX = (moveX / len) * this.walkSpeed * speedScale;
+        this.velocityZ = (moveZ / len) * this.walkSpeed * speedScale;
       } else {
         this.velocityX = 0;
         this.velocityZ = 0;
@@ -196,7 +218,8 @@ export class WowControls {
     }
 
     this.justJumped = false;
-    if (this.keys.has('Space') && this.onGround) {
+    if (this.keys.has('Space') && this.onGround && this.stance !== 'prone') {
+      this.stance = 'stand';
       this.velocityY = this.jumpSpeed;
       this.onGround = false;
       this.justJumped = true;
@@ -228,6 +251,21 @@ export class WowControls {
 
   _onKeyDown(e) {
     if (e.code === 'Space') e.preventDefault();
+
+    // Stance toggles (ignore key-repeat)
+    if (!e.repeat) {
+      if (e.code === 'KeyC') {
+        e.preventDefault();
+        if (this.stance === 'crouch') this.stance = 'stand';
+        else this.stance = 'crouch';
+      }
+      if (e.code === 'KeyZ') {
+        e.preventDefault();
+        if (this.stance === 'prone') this.stance = 'stand';
+        else this.stance = 'prone';
+      }
+    }
+
     this.keys.add(e.code);
   }
 
