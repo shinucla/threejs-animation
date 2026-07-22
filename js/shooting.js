@@ -15,7 +15,7 @@ const MUZZLE_HEIGHT = 1.25;
 const MUZZLE_FORWARD = 0.4;
 const GROUND_Y = 0;
 /** NDC Y for RMB reticle — horizontally centered, higher in the upper view. */
-const RMB_AIM_NDC_Y = 0.50;
+const RMB_AIM_NDC_Y = 0.40;
 
 /**
  * Shiny aim dot driven by a camera screen ray.

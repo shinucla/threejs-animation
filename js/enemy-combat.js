@@ -3,7 +3,6 @@
  * with distance / accuracy miss. Chases when out of shooting range.
  */
 import {
-  MAX_SHOOT_RANGE,
   hitscanWorld,
   rayHitPlayer,
   shotBodyOrigin,
@@ -11,12 +10,14 @@ import {
 } from './shooting.js';
 import { slideXZ } from './collision.js';
 
-const DISCOVER_RANGE = MAX_SHOOT_RANGE * 1.15;
+/** Enemy discover / aim / shot range (slightly beyond player MAX_SHOOT_RANGE 18). */
+const ENEMY_MAX_RANGE = 20;
+const DISCOVER_RANGE = ENEMY_MAX_RANGE;
 const READY_DELAY = 1.0;
 const FIRE_INTERVAL = 1.0;
 const CHASE_SPEED = 2.6;
 /** Stop chasing / start shooting inside this radius (meters). */
-const CHASE_STOP_DIST = MAX_SHOOT_RANGE * 0.82;
+const CHASE_STOP_DIST = ENEMY_MAX_RANGE * 0.82;
 const MUZZLE_HEIGHT = 1.35;
 const MUZZLE_FORWARD = 0.35;
 const PLAYER_CHEST = 1.15;
@@ -148,7 +149,7 @@ export class EnemyCombat {
       }
 
       const canShoot =
-        distXZ <= MAX_SHOOT_RANGE &&
+        distXZ <= ENEMY_MAX_RANGE &&
         facingDot >= SHOOT_FACE_DOT &&
         this._hasLos(e, player, solids);
 
@@ -208,7 +209,7 @@ export class EnemyCombat {
       dir = applySpread(dir, yawJitter, pitchJitter);
     }
 
-    const maxDist = Math.min(MAX_SHOOT_RANGE, Math.max(len + 4, 6));
+    const maxDist = Math.min(ENEMY_MAX_RANGE, Math.max(len + 4, 6));
     const world = hitscanWorld(body, dir, solids, maxDist);
     const playerT = rayHitPlayer(body, dir, player, maxDist);
     const muzzle = clampedMuzzle(body, dir, solids, MUZZLE_FORWARD);
