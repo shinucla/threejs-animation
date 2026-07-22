@@ -52,8 +52,22 @@ function syncEnemy(e, pos) {
   }
 }
 
+/** Stormtrooper GLB faces local −Z at rotation.y = 0 (not Mixamo +Z). */
+function enemyForward(yaw) {
+  return { x: -Math.sin(yaw), z: -Math.cos(yaw) };
+}
+
+function muzzlePos(pos, yaw) {
+  const f = enemyForward(yaw);
+  return {
+    x: pos.x + f.x * MUZZLE_FORWARD,
+    y: pos.y + MUZZLE_HEIGHT,
+    z: pos.z + f.z * MUZZLE_FORWARD,
+  };
+}
+
 function yawTo(dx, dz) {
-  return Math.atan2(dx, dz);
+  return Math.atan2(-dx, -dz);
 }
 
 function turnEnemyToward(e, yaw, snap = false) {
@@ -129,9 +143,8 @@ export class EnemyCombat {
       // Track player — turn every frame while engaged.
       turnEnemyToward(e, wantYaw, false);
 
-      const fwdX = Math.sin(e.yaw);
-      const fwdZ = Math.cos(e.yaw);
-      const facingDot = fwdX * toX + fwdZ * toZ;
+      const fwd = enemyForward(e.yaw);
+      const facingDot = fwd.x * toX + fwd.z * toZ;
 
       // Chase when too far to shoot reliably.
       if (distXZ > CHASE_STOP_DIST) {
@@ -163,11 +176,7 @@ export class EnemyCombat {
 
   _hasLos(e, player, solids) {
     const pos = enemyPos(e);
-    const origin = {
-      x: pos.x + Math.sin(e.yaw) * MUZZLE_FORWARD,
-      y: pos.y + MUZZLE_HEIGHT,
-      z: pos.z + Math.cos(e.yaw) * MUZZLE_FORWARD,
-    };
+    const origin = muzzlePos(pos, e.yaw);
     const target = {
       x: player.x,
       y: player.y + PLAYER_CHEST,
@@ -185,11 +194,7 @@ export class EnemyCombat {
 
   _shoot(e, player, solids, distXZ) {
     const pos = enemyPos(e);
-    const origin = {
-      x: pos.x + Math.sin(e.yaw) * MUZZLE_FORWARD,
-      y: pos.y + MUZZLE_HEIGHT,
-      z: pos.z + Math.cos(e.yaw) * MUZZLE_FORWARD,
-    };
+    const origin = muzzlePos(pos, e.yaw);
     const target = {
       x: player.x,
       y: player.y + PLAYER_CHEST,
