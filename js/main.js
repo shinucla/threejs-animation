@@ -12,6 +12,7 @@ import {
 const PI = Math.PI;
 const PI90 = Math.PI / 2;
 const FADE = 0.35;
+const _boneWorld = new THREE.Vector3();
 
 let scene, renderer, camera, floor, clock;
 let group, followGroup, model, mixer;
@@ -346,6 +347,41 @@ function playJump() {
   currentAction = 'Jump';
 }
 
+/**
+ * Lowest bone world-Y on the posed skeleton (feet when standing, body when prone).
+ * SkinnedMesh geometry AABBs ignore the current pose, so bones are the reliable contact.
+ */
+function getSkeletonMinY(root) {
+  let minY = Infinity;
+  root.traverse((obj) => {
+    if (!obj.isBone) return;
+    obj.getWorldPosition(_boneWorld);
+    if (_boneWorld.y < minY) minY = _boneWorld.y;
+  });
+  return minY;
+}
+
+/**
+ * Keep the mesh from sinking under the floor.
+ * On ground: pin the lowest bone to groundY (feet / prone contact).
+ * In air (jump): only push up if something dips below the plane; after landing, pin again.
+ */
+function keepModelAboveGround() {
+  if (!model || !controls) return;
+
+  model.updateMatrixWorld(true);
+  const minY = getSkeletonMinY(model);
+  if (!Number.isFinite(minY)) return;
+
+  const groundY = controls.groundY;
+  const sink = minY - groundY;
+  if (controls.onGround) {
+    if (Math.abs(sink) > 1e-5) model.position.y -= sink;
+  } else if (sink < 0) {
+    model.position.y -= sink;
+  }
+}
+
 function updateCharacter(delta) {
   if (!controls || appMode !== 'run') return;
 
@@ -364,11 +400,6 @@ function updateCharacter(delta) {
 
   followGroup.position.copy(group.position);
 
-  const camPos = controls.getCameraPosition();
-  const target = controls.getTarget();
-  camera.position.set(camPos.x, camPos.y, camPos.z);
-  camera.lookAt(target.x, target.y, target.z);
-
   if (floor && controls.floorDecale) {
     const dx = controls.position.x - floor.position.x;
     const dz = controls.position.z - floor.position.z;
@@ -377,6 +408,12 @@ function updateCharacter(delta) {
   }
 
   if (mixer) mixer.update(delta);
+  keepModelAboveGround();
+
+  const camPos = controls.getCameraPosition();
+  const target = controls.getTarget();
+  camera.position.set(camPos.x, camPos.y, camPos.z);
+  camera.lookAt(target.x, target.y, target.z);
 }
 
 function onWindowResize() {

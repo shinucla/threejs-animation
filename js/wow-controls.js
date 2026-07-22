@@ -18,8 +18,9 @@ export class WowControls {
     this.distance = 5;
     this.minDistance = 1.5;
     this.maxDistance = 12;
-    this.minPitch = -0.2;
-    this.maxPitch = 1.45;
+    // Pitch is elevation from horizontal; keep camera ≥15° above the ground plane.
+    this.minPitch = options.minPitch ?? Math.PI / 12;
+    this.maxPitch = options.maxPitch ?? 1.45;
 
     this.walkSpeed = options.walkSpeed ?? 1.8;
     this.jumpSpeed = options.jumpSpeed ?? 4.5;
@@ -136,8 +137,8 @@ export class WowControls {
     if (dragging && (this.deltaX !== 0 || this.deltaY !== 0)) {
       this.yaw -= this.deltaX * this.orbitSensitivity;
       this.pitch += this.deltaY * this.orbitSensitivity;
-      this.pitch = clamp(this.pitch, this.minPitch, this.maxPitch);
     }
+    this.pitch = clamp(this.pitch, this.minPitch, this.maxPitch);
     this.deltaX = 0;
     this.deltaY = 0;
 
@@ -236,6 +237,7 @@ export class WowControls {
     this.position.z += this.velocityZ * dt;
     this.position.y += this.velocityY * dt;
 
+    // Never let the capsule sink below the ground plane.
     if (this.onGround) {
       this.position.y = this.groundY;
       this.velocityY = 0;
@@ -245,6 +247,8 @@ export class WowControls {
       this.velocityY = 0;
       this.velocityZ = 0;
       this.onGround = true;
+    } else if (this.position.y < this.groundY) {
+      this.position.y = this.groundY;
     }
 
     this.moving = this.onGround && wantMove;
