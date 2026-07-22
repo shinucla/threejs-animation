@@ -5,7 +5,8 @@ import { WowControls } from './wow-controls.js';
 import { BlenderMode } from './blender-mode.js';
 import { EditorMode } from './editor-mode.js';
 import { VPGLayer } from './vpg-layer.js';
-import { getWorldSolidCount } from './world-solids.js';
+import { getWorldSolidCount, getWorldSolids } from './world-solids.js';
+import { AimTarget, ShotSystem } from './shooting.js';
 import {
   findSkinnedMesh,
   retargetMixamoClip,
@@ -29,6 +30,8 @@ let lastLoggedVPG = -1;
 let lastLoggedSolids = -1;
 let blenderMode = null;
 let editorMode = null;
+let aimTarget = null;
+let shotSystem = null;
 let appMode = 'run';
 let soldierMesh = null;
 
@@ -180,6 +183,13 @@ function init() {
   controls.pitch = 0.45;
   controls.facing = 0;
 
+  aimTarget = new AimTarget(scene);
+  shotSystem = new ShotSystem(scene, {
+    getSolids: getWorldSolids,
+    getEnemies: () => editorMode?.enemies ?? [],
+    onEnemyHit: (i) => editorMode?.removeEnemyAt?.(i),
+  });
+
   window.addEventListener('resize', onWindowResize);
 
   window.addEventListener('app:set-mode', (e) => {
@@ -257,6 +267,8 @@ function setAppMode(mode) {
   }
 
   if (controls) controls.enabled = mode === 'run';
+  if (aimTarget) aimTarget.setVisible(mode === 'run');
+  if (shotSystem) shotSystem.setVisible(mode === 'run');
 
   if (blenderMode) {
     blenderMode.setActive(mode === 'blender');
@@ -585,6 +597,20 @@ function updateCharacter(delta) {
   const target = controls.getTarget();
   camera.position.set(camPos.x, camPos.y, camPos.z);
   camera.lookAt(target.x, target.y, target.z);
+
+  // Aim after camera is current — mouse follow / RMB upper-center reticle.
+  if (aimTarget) {
+    aimTarget.updateFromScreen(camera, renderer.domElement, controls.position, controls, delta);
+  }
+  if (shotSystem) {
+    const firing =
+      controls.keys.has('Digit1') || controls.keys.has('Numpad1');
+    shotSystem.update(delta, {
+      firing,
+      position: controls.position,
+      aimDir: aimTarget?.getAimDirection() ?? { x: 0, y: 0, z: 1 },
+    });
+  }
 }
 
 function onWindowResize() {

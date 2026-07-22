@@ -5,10 +5,12 @@
  * W/S     — move along character facing
  * Q/E     — strafe relative to facing
  * A/D     — turn (camera+character; character-only with LMB; strafe with RMB)
- * LMB drag — orbit camera only
- * RMB drag — orbit camera and steer facing
+ * LMB drag — orbit camera only (aim holds last position)
+ * RMB drag — orbit camera, steer facing, aim snaps to upper-center
+ * (no buttons) — aim follows mouse pointer
  * Wheel   — zoom
  * Space   — jump
+ * 1       — fire (hold for ~5 shots/s)
  * [ / ]   — decrease / increase VPG
  */
 import { collideWithWorld } from './collision.js';
@@ -147,6 +149,7 @@ export class WowControls {
       this.scrollY = 0;
     }
 
+    // LMB / RMB: orbit camera. RMB also locks facing (original WoW steer).
     const dragging = this.lmb || this.rmb;
     if (dragging && (this.deltaX !== 0 || this.deltaY !== 0)) {
       this.yaw -= this.deltaX * this.orbitSensitivity;

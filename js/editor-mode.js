@@ -734,6 +734,12 @@ export class EditorMode {
     this.enemies.splice(i, 1);
   }
 
+  /** Public hit for run-mode shooting. */
+  removeEnemyAt(i) {
+    this._removeEnemyAt(i);
+    this._emitHud();
+  }
+
   _clearEnemies() {
     while (this.enemies.length) this._removeEnemyAt(0);
   }
