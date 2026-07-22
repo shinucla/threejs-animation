@@ -15,7 +15,7 @@ const MUZZLE_HEIGHT = 1.25;
 const MUZZLE_FORWARD = 0.4;
 const GROUND_Y = 0;
 /** NDC Y for RMB reticle — horizontally centered, higher in the upper view. */
-export const RMB_AIM_NDC_Y = 0.35;
+export const RMB_AIM_NDC_Y = 0.375;
 
 /** Screen-space client position of the RMB aim reticle on `dom`. */
 export function rmbAimClientPoint(dom) {
