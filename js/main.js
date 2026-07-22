@@ -35,7 +35,7 @@ let soldierMesh = null;
 const ANIM_SOURCES = {
   Idle: 'assets/animations/mixamo-idle.fbx',
   Run: 'assets/animations/mixamo-run.fbx',
-  Jump: 'assets/animations/mixamo-jump.fbx',
+  Jump: 'assets/animations/mixamo-jump2.fbx',
   Crouch: 'assets/animations/mixamo-crouch.fbx',
   Prone: 'assets/animations/mixamo-prone.fbx',
 };
@@ -88,8 +88,10 @@ function init() {
 
   controls = new WowControls({
     walkSpeed: 5,
-    // Apex ≈ v²/(2g) ≥ 1m so a single voxel is jump-onto / jump-over.
-    jumpSpeed: 5.2,
+    // Apex cut by ~1/3 vs prior 5.0 (height ∝ v² → v *= √(2/3)).
+    jumpSpeed: 4.08,
+    // Run-jump travel ≈ 3 box widths.
+    jumpForwardScale: 0.72,
     gravity: 12,
     eyeHeight: 1.0,
   });
@@ -385,6 +387,8 @@ function playJump() {
 
   jump.reset();
   jump.setEffectiveWeight(1);
+  // Native clip speed — do not stretch the ~16-frame jump to fill hang time.
+  jump.setEffectiveTimeScale(1);
   jump.play();
   currentAction = 'Jump';
 }
@@ -465,9 +469,11 @@ function updateCharacter(delta) {
 
   if (controls.justJumped && actions?.Jump) {
     playJump();
-  } else if (!(currentAction === 'Jump' && !controls.onGround)) {
+  } else if (currentAction === 'Jump' && !controls.onGround) {
+    // Stay on Jump until landing (last frame clamps). Never restart mid-air.
+  } else {
     const next = desiredLocomotionAction();
-    const fade = currentAction === 'Jump' ? 0.15 : FADE;
+    const fade = currentAction === 'Jump' ? 0.12 : FADE;
     crossFadeTo(next, fade);
   }
 

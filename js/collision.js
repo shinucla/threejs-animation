@@ -2,7 +2,7 @@
  * Character ↔ voxel AABB collision (ported from engine8 pkg/render/collision.go).
  *
  * Boxes block walking through; airborne vaulting lets the actor pass onto/over
- * ledges within jump reach; short step-ups handle low lips while grounded.
+ * one voxel layer (even when physics apex is slightly below the lip).
  */
 
 export const BOX_SIZE = 1;
@@ -10,6 +10,13 @@ export const COLLIDER_RADIUS = 0.28;
 export const SKIN = 0.02;
 /** Tallest ledge walkable without jumping (~ankle height). */
 export const MAX_STEP_HEIGHT = 0.35;
+/** One box layer is always vaultable while jumping (game feel ≥ physics apex). */
+export const VAULT_LAYER_HEIGHT = BOX_SIZE;
+/**
+ * When falling onto a vaultable 1-layer top, snap up if feet are within this
+ * distance below the lip (covers short hops that don't quite reach 1m).
+ */
+export const VAULT_LAND_ASSIST = 0.45;
 
 /**
  * @typedef {{ min: {x:number,y:number,z:number}, max: {x:number,y:number,z:number} }} AABB
@@ -39,6 +46,11 @@ export function bodyHeight(stance, height = 1.8) {
 export function maxJumpHeight(jumpSpeed, gravity) {
   if (!(jumpSpeed > 0) || !(gravity > 0)) return 1.05;
   return (jumpSpeed * jumpSpeed) / (2 * gravity);
+}
+
+/** Collision vault reach — at least one box layer, without raising jumpSpeed. */
+export function vaultReach(jumpSpeed, gravity) {
+  return Math.max(maxJumpHeight(jumpSpeed, gravity), VAULT_LAYER_HEIGHT);
 }
 
 function aabbOverlap(a, b) {
@@ -80,7 +92,11 @@ export function supportHeight(ax, ay, az, ar, solids) {
 
 function canVault(ctrl, box, jumpReach) {
   if (ctrl.onGround) return false;
-  return box.max.y <= ctrl.jumpStartY + jumpReach + SKIN;
+  return box.max.y <= (ctrl.jumpStartY ?? 0) + jumpReach + SKIN;
+}
+
+function isSingleLayerVault(ctrl, supportY) {
+  return supportY - (ctrl.jumpStartY ?? 0) <= VAULT_LAYER_HEIGHT + SKIN;
 }
 
 function resolveHorizontal(ctrl, solids, axisX, jumpReach) {
@@ -147,7 +163,7 @@ function resolveHorizontal(ctrl, solids, axisX, jumpReach) {
  */
 export function collideWithWorld(ctrl, solids, dt, opts = {}) {
   const list = solids || [];
-  const jumpReach = maxJumpHeight(ctrl.jumpSpeed, ctrl.gravity);
+  const jumpReach = vaultReach(ctrl.jumpSpeed, ctrl.gravity);
 
   if (opts.jumped) {
     ctrl.jumpStartY = ctrl.position.y;
@@ -202,8 +218,12 @@ export function collideWithWorld(ctrl, solids, dt, opts = {}) {
 
   let onSupport = ctrl.velocityY <= 0 && ctrl.position.y <= support + SKIN;
   if (onSupport && support > (ctrl.jumpStartY ?? 0) + 0.01) {
-    // Raised ledge: require feet near the top so mid-vault doesn't snap early.
-    if (ctrl.position.y < support - 0.2) onSupport = false;
+    // Raised ledge: keep mid-vault from snapping too early, but allow a
+    // generous window for 1-layer tops when the hop apex is slightly short.
+    const assist = isSingleLayerVault(ctrl, support)
+      ? VAULT_LAND_ASSIST
+      : 0.2;
+    if (ctrl.position.y < support - assist) onSupport = false;
   }
 
   if (onSupport) {

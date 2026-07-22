@@ -27,6 +27,8 @@ export class WowControls {
 
     this.walkSpeed = options.walkSpeed ?? 1.8;
     this.jumpSpeed = options.jumpSpeed ?? 4.5;
+    /** Horizontal speed kept when leaving the ground (1 = full run carry). */
+    this.jumpForwardScale = options.jumpForwardScale ?? 0.72;
     this.gravity = options.gravity ?? 12;
     this.turnSpeed = options.turnSpeed ?? 1.8;
     this.orbitSensitivity = options.orbitSensitivity ?? 0.005;
@@ -63,6 +65,10 @@ export class WowControls {
     this.hasPointer = false;
     /** When false, update() skips input and movement (other modes own the canvas). */
     this.enabled = true;
+    /** Previous-frame Space state for edge-triggered jumps. */
+    this._spaceDown = false;
+    /** After a jump, Space must be released before another jump can start. */
+    this._jumpArm = true;
 
     this._onKeyDown = this._onKeyDown.bind(this);
     this._onKeyUp = this._onKeyUp.bind(this);
@@ -125,6 +131,7 @@ export class WowControls {
       this.deltaY = 0;
       this.scrollY = 0;
       this.keys.clear();
+      this._spaceDown = false;
       return;
     }
 
@@ -228,11 +235,27 @@ export class WowControls {
 
     this.justJumped = false;
     let jumped = false;
-    if (this.keys.has('Space') && this.onGround && this.stance !== 'prone') {
+
+    const spaceDown = this.keys.has('Space');
+    const spacePressed = spaceDown && !this._spaceDown;
+    this._spaceDown = spaceDown;
+    if (!spaceDown) this._jumpArm = true;
+
+    // Edge-trigger only — holding Space must not re-fire if onGround flickers mid-air.
+    if (
+      spacePressed &&
+      this._jumpArm &&
+      this.onGround &&
+      this.stance !== 'prone'
+    ) {
       this.stance = 'stand';
       this.velocityY = this.jumpSpeed;
+      // Cut run carry so jumps don't sail as far forward.
+      this.velocityX *= this.jumpForwardScale;
+      this.velocityZ *= this.jumpForwardScale;
       this.onGround = false;
       this.justJumped = true;
+      this._jumpArm = false;
       jumped = true;
     }
 
