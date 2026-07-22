@@ -2,6 +2,7 @@
  * Aim marker + hitscan tracers. Aim comes from a screen ray (mouse or reticle).
  */
 import * as THREE from 'three';
+import { playGunshot } from './sfx.js';
 
 const FIRE_INTERVAL = 1 / 5;
 const TRACER_LIFE = 0.12;
@@ -33,15 +34,25 @@ export function rmbAimClientPoint(dom) {
  * - LMB only: hold last aim while orbiting
  * Dot sits on the first LOS hit (ground / boxes / enemies), else on the
  * MAX_SHOOT_RANGE sphere along the aim ray.
+ * A stabilizer eases screen aim (and world point) so the dot moves smoothly.
  */
 export class AimTarget {
   /**
    * @param {THREE.Scene} scene
-   * @param {{ getSolids?: () => any[], getEnemies?: () => any[] }} [opts]
+   * @param {{
+   *   getSolids?: () => any[],
+   *   getEnemies?: () => any[],
+   *   stabilizeSpeed?: number,
+   *   stabilizeWorldSpeed?: number,
+   * }} [opts]
    */
   constructor(scene, opts = {}) {
     this.getSolids = opts.getSolids ?? (() => []);
     this.getEnemies = opts.getEnemies ?? (() => []);
+    /** Higher = snappier screen follow (rad-ish exp rate). */
+    this.stabilizeSpeed = opts.stabilizeSpeed ?? 14;
+    /** World-point blend after hitscan (kills depth flicker). */
+    this.stabilizeWorldSpeed = opts.stabilizeWorldSpeed ?? 18;
     const core = new THREE.Mesh(
       new THREE.SphereGeometry(0.09, 20, 20),
       new THREE.MeshStandardMaterial({
@@ -67,6 +78,9 @@ export class AimTarget {
     this._t = 0;
     this._raycaster = new THREE.Raycaster();
     this._ndc = new THREE.Vector2();
+    this._smoothNdc = new THREE.Vector2();
+    this._smoothReady = false;
+    this._worldReady = false;
     /** @type {{x:number,y:number,z:number}} */
     this.aimDir = { x: 0, y: 0, z: 1 };
     this._hasAim = false;
@@ -122,8 +136,20 @@ export class AimTarget {
     }
 
     if (!freeze) {
-      this._ndc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
-      this._ndc.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+      const targetNdcX = ((clientX - rect.left) / rect.width) * 2 - 1;
+      const targetNdcY = -((clientY - rect.top) / rect.height) * 2 + 1;
+
+      // Stabilizer: ease screen aim toward the raw pointer / reticle.
+      if (!this._smoothReady) {
+        this._smoothNdc.set(targetNdcX, targetNdcY);
+        this._smoothReady = true;
+      } else {
+        const k = 1 - Math.exp(-this.stabilizeSpeed * Math.max(dt, 0));
+        this._smoothNdc.x += (targetNdcX - this._smoothNdc.x) * k;
+        this._smoothNdc.y += (targetNdcY - this._smoothNdc.y) * k;
+      }
+
+      this._ndc.copy(this._smoothNdc);
       this._raycaster.setFromCamera(this._ndc, camera);
       const origin = this._raycaster.ray.origin;
       const dir = this._raycaster.ray.direction;
@@ -141,7 +167,17 @@ export class AimTarget {
         this.getEnemies(),
         MAX_SHOOT_RANGE,
       );
-      this.mesh.position.set(res.point.x, res.point.y, res.point.z);
+
+      // Soften depth jumps when the ray crosses near/far surfaces.
+      if (!this._worldReady) {
+        this.mesh.position.set(res.point.x, res.point.y, res.point.z);
+        this._worldReady = true;
+      } else {
+        const wk = 1 - Math.exp(-this.stabilizeWorldSpeed * Math.max(dt, 0));
+        this.mesh.position.x += (res.point.x - this.mesh.position.x) * wk;
+        this.mesh.position.y += (res.point.y - this.mesh.position.y) * wk;
+        this.mesh.position.z += (res.point.z - this.mesh.position.z) * wk;
+      }
     }
 
     this._mat.emissiveIntensity = 2.2 + Math.sin(this._t * 6) * 0.7;
@@ -244,6 +280,7 @@ export class ShotSystem {
   }
 
   _addTracer(from, to, hit, enemy = false) {
+    playGunshot({ enemy: !!enemy });
     const geo = new THREE.BufferGeometry().setFromPoints([
       new THREE.Vector3(from.x, from.y, from.z),
       new THREE.Vector3(to.x, to.y, to.z),

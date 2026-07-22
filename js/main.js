@@ -8,6 +8,7 @@ import { VPGLayer } from './vpg-layer.js';
 import { getWorldSolidCount, getWorldSolids } from './world-solids.js';
 import { AimTarget, ShotSystem, rmbAimClientPoint } from './shooting.js';
 import { EnemyCombat } from './enemy-combat.js';
+import { unlockAudio } from './sfx.js';
 import {
   findSkinnedMesh,
   retargetMixamoClip,
@@ -181,6 +182,10 @@ function init() {
     eyeHeight: 1.0,
   });
   controls.attach(renderer.domElement);
+  // Browsers block AudioContext until a user gesture.
+  const unlock = () => unlockAudio();
+  window.addEventListener('pointerdown', unlock, { once: false });
+  window.addEventListener('keydown', unlock, { once: false });
   controls.distance = 5;
   controls.cameraDistance = 5;
   // Camera behind on −Z; Mixamo mesh faces +Z, so facing=0 shows the back.
