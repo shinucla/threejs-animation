@@ -15,7 +15,7 @@
  */
 import { collideWithWorld } from './collision.js';
 import { getWorldSolids } from './world-solids.js';
-import { hitscanWorld, inflateSolids } from './shooting.js';
+import { hitscanWorld, inflateSolids, rmbAimClientPoint } from './shooting.js';
 
 export class WowControls {
   constructor(options = {}) {
@@ -90,6 +90,8 @@ export class WowControls {
     this._onWheel = this._onWheel.bind(this);
     this._onContextMenu = (e) => e.preventDefault();
     this._onBlur = () => this.keys.clear();
+    this._onPointerLockChange = this._onPointerLockChange.bind(this);
+    this._rmbLockPending = false;
   }
 
   attach(domElement) {
@@ -102,10 +104,12 @@ export class WowControls {
     window.addEventListener('pointermove', this._onPointerMove);
     domElement.addEventListener('wheel', this._onWheel, { passive: false });
     domElement.addEventListener('contextmenu', this._onContextMenu);
+    document.addEventListener('pointerlockchange', this._onPointerLockChange);
   }
 
   detach() {
     if (!this.dom) return;
+    this._endRmbPointerLock();
     window.removeEventListener('keydown', this._onKeyDown);
     window.removeEventListener('keyup', this._onKeyUp);
     window.removeEventListener('blur', this._onBlur);
@@ -114,6 +118,7 @@ export class WowControls {
     window.removeEventListener('pointermove', this._onPointerMove);
     this.dom.removeEventListener('wheel', this._onWheel);
     this.dom.removeEventListener('contextmenu', this._onContextMenu);
+    document.removeEventListener('pointerlockchange', this._onPointerLockChange);
   }
 
   /** Eye / look-at target for the orbit camera. */
@@ -352,27 +357,101 @@ export class WowControls {
     this.keys.delete(e.code);
   }
 
+  _pinPointerToAim() {
+    if (!this.dom) return;
+    const p = rmbAimClientPoint(this.dom);
+    this.pointerX = p.x;
+    this.pointerY = p.y;
+    return p;
+  }
+
+  _beginRmbPointerLock() {
+    const p = this._pinPointerToAim();
+    const target = document.getElementById('rmb-lock-target');
+    if (!target || !p) return;
+    target.style.left = `${p.x}px`;
+    target.style.top = `${p.y}px`;
+    this._rmbLockPending = true;
+    const req =
+      target.requestPointerLock ||
+      target.mozRequestPointerLock ||
+      target.webkitRequestPointerLock;
+    try {
+      const ret = req?.call(target);
+      if (ret && typeof ret.catch === 'function') {
+        ret.catch(() => {
+          this._rmbLockPending = false;
+        });
+      }
+    } catch {
+      this._rmbLockPending = false;
+    }
+  }
+
+  _endRmbPointerLock() {
+    this._rmbLockPending = false;
+    const p = this._pinPointerToAim();
+    const target = document.getElementById('rmb-lock-target');
+    if (target && p) {
+      target.style.left = `${p.x}px`;
+      target.style.top = `${p.y}px`;
+    }
+    if (document.pointerLockElement) {
+      document.exitPointerLock?.();
+    }
+  }
+
+  _onPointerLockChange() {
+    if (document.pointerLockElement) {
+      this._rmbLockPending = false;
+      this._pinPointerToAim();
+      return;
+    }
+    // Unlock: OS cursor is warped to the lock-target center (aim reticle).
+    this._rmbLockPending = false;
+    this._pinPointerToAim();
+  }
+
   _onPointerDown(e) {
     if (!this.enabled) return;
-    if (e.button === 0) this.lmb = true;
-    if (e.button === 2) this.rmb = true;
-    this.pointerX = e.clientX;
-    this.pointerY = e.clientY;
-    this.hasPointer = true;
-    try {
-      this.dom.setPointerCapture(e.pointerId);
-    } catch {
-      /* ignore */
+    if (e.button === 0) {
+      this.lmb = true;
+      this.pointerX = e.clientX;
+      this.pointerY = e.clientY;
+      this.hasPointer = true;
+      try {
+        this.dom.setPointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+    if (e.button === 2) {
+      this.rmb = true;
+      this.hasPointer = true;
+      this._beginRmbPointerLock();
     }
   }
 
   _onPointerUp(e) {
     if (e.button === 0) this.lmb = false;
-    if (e.button === 2) this.rmb = false;
+    if (e.button === 2) {
+      this.rmb = false;
+      this._pinPointerToAim();
+      this._endRmbPointerLock();
+    }
   }
 
   _onPointerMove(e) {
     if (!this.enabled) return;
+    if (this.rmb) {
+      // Orbit from movement deltas; keep logical pointer on the aim reticle.
+      this.deltaX += e.movementX;
+      this.deltaY += e.movementY;
+      this._pinPointerToAim();
+      this.hasPointer = true;
+      return;
+    }
     if (!this.hasPointer) {
       this.pointerX = e.clientX;
       this.pointerY = e.clientY;

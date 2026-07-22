@@ -15,7 +15,16 @@ const MUZZLE_HEIGHT = 1.25;
 const MUZZLE_FORWARD = 0.4;
 const GROUND_Y = 0;
 /** NDC Y for RMB reticle — horizontally centered, higher in the upper view. */
-const RMB_AIM_NDC_Y = 0.40;
+export const RMB_AIM_NDC_Y = 0.35;
+
+/** Screen-space client position of the RMB aim reticle on `dom`. */
+export function rmbAimClientPoint(dom) {
+  const rect = dom.getBoundingClientRect();
+  return {
+    x: rect.left + rect.width * 0.5,
+    y: rect.top + rect.height * (1 - RMB_AIM_NDC_Y) * 0.5,
+  };
+}
 
 /**
  * Shiny aim dot driven by a camera screen ray.

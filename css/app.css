@@ -33,6 +33,48 @@ body {
   height: 100%;
 }
 
+#container.rmb-aiming,
+#container.rmb-aiming canvas,
+body.rmb-aiming {
+  cursor: none !important;
+}
+
+.rmb-lock-target {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 2px;
+  height: 2px;
+  margin: -1px 0 0 -1px;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 39;
+}
+
+.rmb-aim-cursor {
+  position: fixed;
+  width: 18px;
+  height: 18px;
+  margin: -9px 0 0 -9px;
+  border: 2px solid #ffe066;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45), 0 0 10px rgba(255, 224, 102, 0.55);
+  pointer-events: none;
+  z-index: 40;
+}
+
+.rmb-aim-cursor::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 4px;
+  height: 4px;
+  margin: -2px 0 0 -2px;
+  border-radius: 50%;
+  background: #fff6c2;
+}
+
 /* —— Status bar —— */
 #status-bar {
   position: fixed;

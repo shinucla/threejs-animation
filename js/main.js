@@ -6,7 +6,7 @@ import { BlenderMode } from './blender-mode.js';
 import { EditorMode } from './editor-mode.js';
 import { VPGLayer } from './vpg-layer.js';
 import { getWorldSolidCount, getWorldSolids } from './world-solids.js';
-import { AimTarget, ShotSystem } from './shooting.js';
+import { AimTarget, ShotSystem, rmbAimClientPoint } from './shooting.js';
 import { EnemyCombat } from './enemy-combat.js';
 import {
   findSkinnedMesh,
@@ -310,6 +310,7 @@ function setAppMode(mode) {
   if (aimTarget) aimTarget.setVisible(mode === 'run');
   if (shotSystem) shotSystem.setVisible(mode === 'run');
   if (enemyCombat) enemyCombat.enabled = mode === 'run';
+  if (mode !== 'run') updateRmbAimCursor(false);
   if (mode === 'run') {
     playerHp = 100;
     playerHits = 0;
@@ -592,6 +593,30 @@ function updateHitsHud() {
   el.hidden = appMode !== 'run';
 }
 
+/** Hide OS cursor and show a reticle locked to the RMB aim point. */
+function updateRmbAimCursor(active) {
+  const el = document.getElementById('rmb-aim-cursor');
+  const lockTarget = document.getElementById('rmb-lock-target');
+  const container = document.getElementById('container');
+  if (!el || !renderer) return;
+  if (!active) {
+    el.hidden = true;
+    container?.classList.remove('rmb-aiming');
+    document.body.classList.remove('rmb-aiming');
+    return;
+  }
+  const p = rmbAimClientPoint(renderer.domElement);
+  el.style.left = `${p.x}px`;
+  el.style.top = `${p.y}px`;
+  if (lockTarget) {
+    lockTarget.style.left = `${p.x}px`;
+    lockTarget.style.top = `${p.y}px`;
+  }
+  el.hidden = false;
+  container?.classList.add('rmb-aiming');
+  document.body.classList.add('rmb-aiming');
+}
+
 function updateVpgHud(force) {
   if (!vpgLayer || !renderer) return;
   const v = vpgLayer.getGranularity();
@@ -657,6 +682,7 @@ function updateCharacter(delta) {
   if (aimTarget) {
     aimTarget.updateFromScreen(camera, renderer.domElement, controls.position, controls, delta);
   }
+  updateRmbAimCursor(controls.rmb && appMode === 'run');
   if (shotSystem) {
     const firing =
       controls.keys.has('Digit1') || controls.keys.has('Numpad1');
