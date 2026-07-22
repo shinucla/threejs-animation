@@ -3,6 +3,7 @@ import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
 import { WowControls } from './wow-controls.js';
 import { BlenderMode } from './blender-mode.js';
+import { VPGLayer } from './vpg-layer.js';
 import {
   findSkinnedMesh,
   retargetMixamoClip,
@@ -12,12 +13,17 @@ import {
 const PI = Math.PI;
 const PI90 = Math.PI / 2;
 const FADE = 0.35;
+/** Matches engine2 scene.go: held [ / ] nudge VPG by ±0.35 per second. */
+const VPG_NUDGE_PER_SEC = 0.35;
 const _boneWorld = new THREE.Vector3();
+const _drawSize = new THREE.Vector2();
 
 let scene, renderer, camera, floor, clock;
 let group, followGroup, model, mixer;
 let actions, currentAction = 'Idle';
 let controls;
+let vpgLayer;
+let lastLoggedVPG = -1;
 let blenderMode = null;
 let appMode = 'run';
 let soldierMesh = null;
@@ -72,6 +78,9 @@ function init() {
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFShadowMap;
   container.appendChild(renderer.domElement);
+
+  vpgLayer = new VPGLayer(renderer);
+  updateVpgHud(true);
 
   controls = new WowControls({
     walkSpeed: 5,
@@ -382,10 +391,36 @@ function keepModelAboveGround() {
   }
 }
 
+function updateVpg(delta) {
+  if (!vpgLayer || !controls?.enabled) return;
+
+  let deltaVpg = 0;
+  if (controls.keys.has('BracketLeft')) deltaVpg -= VPG_NUDGE_PER_SEC * delta;
+  if (controls.keys.has('BracketRight')) deltaVpg += VPG_NUDGE_PER_SEC * delta;
+  if (deltaVpg !== 0) vpgLayer.addGranularity(deltaVpg);
+
+  updateVpgHud(false);
+}
+
+function updateVpgHud(force) {
+  if (!vpgLayer || !renderer) return;
+  const v = vpgLayer.getGranularity();
+  if (!force && Math.abs(v - lastLoggedVPG) < 0.01) return;
+  lastLoggedVPG = v;
+
+  renderer.getDrawingBufferSize(_drawSize);
+  const [vw, vh] = vpgLayer.virtualResolution(_drawSize.x, _drawSize.y);
+  const el = document.getElementById('vpg');
+  if (el) {
+    el.textContent = `VPG ${v.toFixed(2)} · ${vw}×${vh}`;
+  }
+}
+
 function updateCharacter(delta) {
   if (!controls || appMode !== 'run') return;
 
   controls.update(delta);
+  updateVpg(delta);
 
   if (controls.justJumped && actions?.Jump) {
     playJump();
@@ -420,6 +455,7 @@ function onWindowResize() {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
+  updateVpgHud(true);
 }
 
 function animate() {
@@ -431,5 +467,11 @@ function animate() {
     blenderMode.update(delta);
   }
 
+  // Pass 1: full-res scene into VPG target (constant 3D cost).
+  renderer.getDrawingBufferSize(_drawSize);
+  vpgLayer.beginScene(_drawSize.x, _drawSize.y);
   renderer.render(scene, camera);
+
+  // Pass 2: virtual-pixel presentation to the canvas.
+  vpgLayer.present(_drawSize.x, _drawSize.y);
 }

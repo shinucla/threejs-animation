@@ -9,6 +9,7 @@
  * RMB drag — orbit camera and steer facing
  * Wheel   — zoom
  * Space   — jump
+ * [ / ]   — decrease / increase VPG
  */
 
 export class WowControls {
@@ -256,6 +257,8 @@ export class WowControls {
 
   _onKeyDown(e) {
     if (e.code === 'Space') e.preventDefault();
+    // VPG adjust (engine2) — keep focus from leaving / page search.
+    if (e.code === 'BracketLeft' || e.code === 'BracketRight') e.preventDefault();
 
     // Stance toggles (ignore key-repeat)
     if (!e.repeat) {
