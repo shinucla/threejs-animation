@@ -9,7 +9,7 @@ const MARK_LIFE = 0.35;
 const ENEMY_RADIUS = 0.4;
 const ENEMY_HEIGHT = 1.8;
 /** Max aim + shot range along the screen ray (meters). */
-const MAX_SHOOT_RANGE = 18;
+export const MAX_SHOOT_RANGE = 18;
 const MUZZLE_HEIGHT = 1.25;
 const MUZZLE_FORWARD = 0.4;
 const GROUND_Y = 0;
@@ -160,6 +160,18 @@ export class ShotSystem {
   }
 
   /**
+   * Spawn a tracer (player or enemy). Optional impact mark.
+   * @param {{x:number,y:number,z:number}} from
+   * @param {{x:number,y:number,z:number}} to
+   * @param {boolean} hit
+   * @param {boolean} [kill]
+   */
+  addShot(from, to, hit, kill = false, enemy = false) {
+    this._addTracer(from, to, hit, enemy);
+    if (hit) this._addMark(to, kill);
+  }
+
+  /**
    * @param {number} dt
    * @param {{ firing: boolean, position: {x:number,y:number,z:number}, aimPoint: {x:number,y:number,z:number} }} state
    */
@@ -247,7 +259,7 @@ export class ShotSystem {
     }
   }
 
-  _addTracer(from, to, hit) {
+  _addTracer(from, to, hit, enemy = false) {
     const geo = new THREE.BufferGeometry().setFromPoints([
       new THREE.Vector3(from.x, from.y, from.z),
       new THREE.Vector3(to.x, to.y, to.z),
@@ -255,7 +267,7 @@ export class ShotSystem {
     const line = new THREE.Line(
       geo,
       new THREE.LineBasicMaterial({
-        color: hit ? 0xffcc55 : 0xffe899,
+        color: enemy ? (hit ? 0xff5544 : 0xff9988) : hit ? 0xffcc55 : 0xffe899,
         transparent: true,
         opacity: 1,
       }),
@@ -311,7 +323,7 @@ export class ShotSystem {
 
 /**
  * Hitscan: enemies, then solid AABBs, then ground y=0.
- * @returns {{ hit: boolean, point: {x:number,y:number,z:number}, enemyIndex: number }}
+ * @returns {{ hit: boolean, point: {x:number,y:number,z:number}, enemyIndex: number, t: number }}
  */
 export function hitscan(origin, dir, solids, enemies, maxDist) {
   let bestT = maxDist;
@@ -376,7 +388,37 @@ export function hitscan(origin, dir, solids, enemies, maxDist) {
     }
   }
 
-  return { hit, point, enemyIndex };
+  return { hit, point, enemyIndex, t: bestT };
+}
+
+/**
+ * World blockers only (boxes + ground) — used for LOS / enemy shots.
+ * @returns {{ hit: boolean, point: {x:number,y:number,z:number}, t: number }}
+ */
+export function hitscanWorld(origin, dir, solids, maxDist) {
+  const res = hitscan(origin, dir, solids, [], maxDist);
+  return { hit: res.hit, point: res.point, t: res.t };
+}
+
+/**
+ * Player body AABB along a ray.
+ * @returns {number|null} hit distance or null
+ */
+export function rayHitPlayer(origin, dir, playerPos, maxDist) {
+  const stanceScale = 1;
+  const min = {
+    x: playerPos.x - ENEMY_RADIUS,
+    y: playerPos.y,
+    z: playerPos.z - ENEMY_RADIUS,
+  };
+  const max = {
+    x: playerPos.x + ENEMY_RADIUS,
+    y: playerPos.y + ENEMY_HEIGHT * stanceScale,
+    z: playerPos.z + ENEMY_RADIUS,
+  };
+  const t = rayAABB(origin, dir, min, max);
+  if (t === null || t < 0 || t > maxDist) return null;
+  return t;
 }
 
 function rayAABB(origin, dir, min, max) {

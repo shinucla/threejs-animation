@@ -76,6 +76,8 @@ export class EditorMode {
     this.ghostMesh = null;
     this.enemyTemplate = null;
     this.enemyMixers = [];
+    /** Enemies from world.json queued until Stormtrooper.glb finishes loading. */
+    this._pendingEnemies = [];
     this.ready = false;
 
     this.orbit = {
@@ -172,12 +174,27 @@ export class EditorMode {
         this.enemyTemplate.position.y -= box2.min.y;
       }
       this._enemyClips = gltf.animations || [];
+      this._flushPendingEnemies();
     } catch (err) {
       console.warn('stormtrooper load:', err);
       this.onToast(`Stormtrooper failed: ${err.message || err}`, 5000);
     }
 
     this.ready = true;
+    this._emitHud();
+  }
+
+  /** Spawn enemies that were loaded from world.json before the GLB was ready. */
+  _flushPendingEnemies() {
+    if (!this.enemyTemplate || !this._pendingEnemies?.length) {
+      this._pendingEnemies = [];
+      return;
+    }
+    for (const e of this._pendingEnemies) {
+      this._addEnemy(e.x, e.y, e.z, e.yaw, false);
+    }
+    this._pendingEnemies = [];
+    this.root.visible = this.active || this.boxes.length > 0 || this.enemies.length > 0;
     this._emitHud();
   }
 
@@ -243,11 +260,21 @@ export class EditorMode {
     const w = emptyWorld();
     w.boxes = this.boxes.map((b) => ({ x: b.x, y: b.y, z: b.z }));
     w.enemies = this.enemies.map((e) => ({
-      x: e.x,
-      y: e.y,
-      z: e.z,
-      yaw: e.yaw,
+      x: e.root?.position.x ?? e.x,
+      y: e.root?.position.y ?? e.y,
+      z: e.root?.position.z ?? e.z,
+      yaw: e.root?.rotation.y ?? e.yaw,
     }));
+    if (this._pendingEnemies?.length && !this.enemies.length) {
+      w.enemies.push(
+        ...this._pendingEnemies.map((e) => ({
+          x: e.x,
+          y: e.y,
+          z: e.z,
+          yaw: e.yaw,
+        })),
+      );
+    }
     if (this.hasCharacter) {
       w.character = {
         x: this.controls.position.x,
@@ -266,7 +293,18 @@ export class EditorMode {
 
     const w = data || emptyWorld();
     for (const b of w.boxes || []) this._addBox(b.x, b.y, b.z, false);
-    for (const e of w.enemies || []) this._addEnemy(e.x, e.y, e.z, e.yaw || 0, false);
+
+    const enemyRows = (w.enemies || []).map((e) => ({
+      x: e.x,
+      y: e.y,
+      z: e.z,
+      yaw: e.yaw || 0,
+    }));
+    if (this.enemyTemplate) {
+      for (const e of enemyRows) this._addEnemy(e.x, e.y, e.z, e.yaw, false);
+    } else {
+      this._pendingEnemies = enemyRows;
+    }
 
     if (w.character) {
       this.hasCharacter = true;
@@ -303,7 +341,10 @@ export class EditorMode {
 
   save() {
     downloadWorld(this.getWorldData());
-    this.onToast('Saved world.json (download)');
+    this.onToast(
+      `Saved world.json (${this.enemies.length} enemies) — replace assets/world/world.json with the download to persist`,
+      4500,
+    );
   }
 
   // —— internals ——
@@ -709,7 +750,7 @@ export class EditorMode {
       action.play();
     }
 
-    const entry = { x, y, z, yaw, root, mixer };
+    const entry = { x, y, z, yaw, root, mixer, combat: null };
     this.enemies.push(entry);
     if (mixer) this.enemyMixers.push(mixer);
     if (recordUndo) {

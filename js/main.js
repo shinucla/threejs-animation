@@ -7,6 +7,7 @@ import { EditorMode } from './editor-mode.js';
 import { VPGLayer } from './vpg-layer.js';
 import { getWorldSolidCount, getWorldSolids } from './world-solids.js';
 import { AimTarget, ShotSystem } from './shooting.js';
+import { EnemyCombat } from './enemy-combat.js';
 import {
   findSkinnedMesh,
   retargetMixamoClip,
@@ -32,6 +33,9 @@ let blenderMode = null;
 let editorMode = null;
 let aimTarget = null;
 let shotSystem = null;
+let enemyCombat = null;
+let playerHp = 100;
+let playerHits = 0;
 let appMode = 'run';
 let soldierMesh = null;
 
@@ -192,6 +196,38 @@ function init() {
     getEnemies: () => editorMode?.enemies ?? [],
     onEnemyHit: (i) => editorMode?.removeEnemyAt?.(i),
   });
+  enemyCombat = new EnemyCombat({
+    getEnemies: () => editorMode?.enemies ?? [],
+    getSolids: getWorldSolids,
+    getPlayer: () => ({
+      x: controls.position.x,
+      y: controls.position.y,
+      z: controls.position.z,
+      stance: controls.stance,
+    }),
+    shotSystem,
+    onPlayerHit: (damage) => {
+      if (appMode !== 'run') return;
+      playerHits += 1;
+      updateHitsHud();
+      playerHp = Math.max(0, playerHp - damage);
+      if (playerHp <= 0) {
+        showToast('Down! (respawned)', 2500);
+        playerHp = 100;
+        controls.position.x = 0;
+        controls.position.y = 0;
+        controls.position.z = 0;
+        controls.velocityX = 0;
+        controls.velocityZ = 0;
+        controls.velocityY = 0;
+        controls.onGround = true;
+      } else {
+        showToast(`Hit −${damage} · HP ${playerHp}`, 1200);
+      }
+    },
+  });
+
+  updateHitsHud();
 
   window.addEventListener('resize', onWindowResize);
 
@@ -272,6 +308,14 @@ function setAppMode(mode) {
   if (controls) controls.enabled = mode === 'run';
   if (aimTarget) aimTarget.setVisible(mode === 'run');
   if (shotSystem) shotSystem.setVisible(mode === 'run');
+  if (enemyCombat) enemyCombat.enabled = mode === 'run';
+  if (mode === 'run') {
+    playerHp = 100;
+    playerHits = 0;
+    updateHitsHud();
+  } else {
+    updateHitsHud();
+  }
 
   if (blenderMode) {
     blenderMode.setActive(mode === 'blender');
@@ -540,6 +584,13 @@ function updateVpg(delta, keySet) {
   updateVpgHud(false);
 }
 
+function updateHitsHud() {
+  const el = document.getElementById('hits');
+  if (!el) return;
+  el.textContent = `Hits ${playerHits}`;
+  el.hidden = appMode !== 'run';
+}
+
 function updateVpgHud(force) {
   if (!vpgLayer || !renderer) return;
   const v = vpgLayer.getGranularity();
@@ -614,6 +665,7 @@ function updateCharacter(delta) {
       aimPoint: aimTarget?.getAimPoint() ?? null,
     });
   }
+  if (enemyCombat) enemyCombat.update(delta);
 }
 
 function onWindowResize() {

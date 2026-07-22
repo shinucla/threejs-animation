@@ -81,6 +81,16 @@ body {
   white-space: nowrap;
 }
 
+.hits-hud {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: var(--danger);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .mode-label {
   font-size: 12px;
   font-weight: 500;
