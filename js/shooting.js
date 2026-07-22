@@ -64,6 +64,15 @@ export class AimTarget {
     return this.aimDir;
   }
 
+  /** World-space aim point (the shiny dot). */
+  getAimPoint() {
+    return {
+      x: this.mesh.position.x,
+      y: this.mesh.position.y,
+      z: this.mesh.position.z,
+    };
+  }
+
   /**
    * @param {THREE.Camera} camera
    * @param {HTMLElement} dom
@@ -145,7 +154,7 @@ export class ShotSystem {
 
   /**
    * @param {number} dt
-   * @param {{ firing: boolean, position: {x:number,y:number,z:number}, aimDir: {x:number,y:number,z:number} }} state
+   * @param {{ firing: boolean, position: {x:number,y:number,z:number}, aimPoint: {x:number,y:number,z:number} }} state
    */
   update(dt, state) {
     this._ageFx(dt);
@@ -157,35 +166,77 @@ export class ShotSystem {
 
     this.cooldown -= dt;
     if (this.cooldown <= 0) {
-      this._fire(state.position, state.aimDir);
+      this._fire(state.position, state.aimPoint);
       this.cooldown = FIRE_INTERVAL;
     }
   }
 
-  _fire(pos, aimDir) {
-    const dir = aimDir;
-    const len = Math.hypot(dir.x, dir.y, dir.z) || 1;
-    const nx = dir.x / len;
-    const ny = dir.y / len;
-    const nz = dir.z / len;
+  /**
+   * Fire muzzle → aim point. Tracer reaches the aim dot when LOS is clear;
+   * otherwise stops at the first blocker (box / enemy / ground short of aim).
+   */
+  _fire(pos, aimPoint) {
+    if (!aimPoint) return;
+
+    const muzzleY = pos.y + MUZZLE_HEIGHT;
+    let dx = aimPoint.x - pos.x;
+    let dy = aimPoint.y - muzzleY;
+    let dz = aimPoint.z - pos.z;
+    let len = Math.hypot(dx, dy, dz);
+    if (len < 1e-4) return;
+    let nx = dx / len;
+    let ny = dy / len;
+    let nz = dz / len;
+
     const origin = {
       x: pos.x + nx * MUZZLE_FORWARD,
-      y: pos.y + MUZZLE_HEIGHT,
+      y: muzzleY,
       z: pos.z + nz * MUZZLE_FORWARD,
     };
 
+    dx = aimPoint.x - origin.x;
+    dy = aimPoint.y - origin.y;
+    dz = aimPoint.z - origin.z;
+    len = Math.hypot(dx, dy, dz);
+    if (len < 1e-4) return;
+    nx = dx / len;
+    ny = dy / len;
+    nz = dz / len;
+
+    const aimDist = len;
+    const losEps = 0.08;
     const hit = hitscan(
       origin,
       { x: nx, y: ny, z: nz },
       this.getSolids(),
       this.getEnemies(),
-      SHOT_RANGE,
+      aimDist + losEps,
     );
-    this._addTracer(origin, hit.point, hit.hit);
-    if (hit.hit) this._addMark(hit.point, hit.enemyIndex >= 0);
 
+    const hitDist = Math.hypot(
+      hit.point.x - origin.x,
+      hit.point.y - origin.y,
+      hit.point.z - origin.z,
+    );
+    const blockedShort = hit.hit && hitDist < aimDist - losEps;
+
+    if (blockedShort) {
+      this._addTracer(origin, hit.point, true);
+      this._addMark(hit.point, hit.enemyIndex >= 0);
+      if (hit.enemyIndex >= 0 && typeof this.onEnemyHit === 'function') {
+        this.onEnemyHit(hit.enemyIndex);
+      }
+      return;
+    }
+
+    // Clear LOS — bullet reaches the aim dot.
+    this._addTracer(origin, aimPoint, false);
     if (hit.enemyIndex >= 0 && typeof this.onEnemyHit === 'function') {
       this.onEnemyHit(hit.enemyIndex);
+      this._addMark(aimPoint, true);
+    } else if (hit.hit) {
+      // Aim itself sits on a surface (e.g. ground / box face).
+      this._addMark(aimPoint, false);
     }
   }
 

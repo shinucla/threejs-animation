@@ -608,7 +608,7 @@ function updateCharacter(delta) {
     shotSystem.update(delta, {
       firing,
       position: controls.position,
-      aimDir: aimTarget?.getAimDirection() ?? { x: 0, y: 0, z: 1 },
+      aimPoint: aimTarget?.getAimPoint() ?? null,
     });
   }
 }
