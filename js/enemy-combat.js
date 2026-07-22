@@ -8,8 +8,6 @@ import {
   rayHitPlayer,
   shotBodyOrigin,
   clampedMuzzle,
-  solidOcclusion,
-  inflateSolids,
 } from './shooting.js';
 import { slideXZ } from './collision.js';
 
@@ -171,37 +169,31 @@ export class EnemyCombat {
 
   _hasLos(e, player, solids) {
     const pos = enemyPos(e);
+    const origin = shotBodyOrigin(pos, MUZZLE_HEIGHT);
     const target = {
       x: player.x,
       y: player.y + PLAYER_CHEST,
       z: player.z,
     };
-    return !solidOcclusion(pos, target, solids);
+    const dx = target.x - origin.x;
+    const dy = target.y - origin.y;
+    const dz = target.z - origin.z;
+    const len = Math.hypot(dx, dy, dz);
+    if (len < 1e-4) return true;
+    const dir = { x: dx / len, y: dy / len, z: dz / len };
+    const world = hitscanWorld(origin, dir, solids, len - 0.08);
+    return !world.hit;
   }
 
   _shoot(e, player, solids, distXZ) {
     const pos = enemyPos(e);
+    const body = shotBodyOrigin(pos, MUZZLE_HEIGHT);
     const target = {
       x: player.x,
       y: player.y + PLAYER_CHEST,
       z: player.z,
     };
 
-    // Boxes block before accuracy / player test (multi-height, below box tops).
-    const occluded = solidOcclusion(pos, target, solids);
-    if (occluded) {
-      const bodyVis = shotBodyOrigin(pos, MUZZLE_HEIGHT);
-      const dx0 = target.x - bodyVis.x;
-      const dy0 = target.y - bodyVis.y;
-      const dz0 = target.z - bodyVis.z;
-      const len0 = Math.hypot(dx0, dy0, dz0) || 1;
-      const dir0 = { x: dx0 / len0, y: dy0 / len0, z: dz0 / len0 };
-      const muzzle = clampedMuzzle(bodyVis, dir0, solids, MUZZLE_FORWARD);
-      this.shotSystem.addShot(muzzle, occluded.point, true, false, true);
-      return;
-    }
-
-    const body = shotBodyOrigin(pos, 0.85);
     let dx = target.x - body.x;
     let dy = target.y - body.y;
     let dz = target.z - body.z;
@@ -217,10 +209,9 @@ export class EnemyCombat {
     }
 
     const maxDist = Math.min(MAX_SHOOT_RANGE, Math.max(len + 4, 6));
-    const world = hitscanWorld(body, dir, inflateSolids(solids), maxDist);
+    const world = hitscanWorld(body, dir, solids, maxDist);
     const playerT = rayHitPlayer(body, dir, player, maxDist);
-    const bodyVis = shotBodyOrigin(pos, MUZZLE_HEIGHT);
-    const muzzle = clampedMuzzle(bodyVis, dir, solids, MUZZLE_FORWARD);
+    const muzzle = clampedMuzzle(body, dir, solids, MUZZLE_FORWARD);
 
     let end = world.hit
       ? world.point

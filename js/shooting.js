@@ -10,16 +10,9 @@ const ENEMY_RADIUS = 0.4;
 const ENEMY_HEIGHT = 1.8;
 /** Max aim + shot range along the screen ray (meters). */
 export const MAX_SHOOT_RANGE = 18;
-/** Visual / tracer height (can sit above 1m boxes). */
+/** Muzzle / fire origin height (meters above feet). */
 const MUZZLE_HEIGHT = 1.25;
 const MUZZLE_FORWARD = 0.4;
-/**
- * Collision cast heights — all at or below a single box top (1m) so hugging
- * a voxel cannot skim bullets over cover.
- */
-const BULLET_HEIGHTS = [0.4, 0.7, 0.95];
-/** Expand box AABBs for bullet tests (covers mesh/collider mismatch). */
-const SOLID_BULLET_PAD = 0.1;
 const GROUND_Y = 0;
 /** NDC Y for RMB reticle — horizontally centered, higher in the upper view. */
 const RMB_AIM_NDC_Y = 0.50;
@@ -199,67 +192,46 @@ export class ShotSystem {
   }
 
   /**
-   * Fire toward aim. Solids are tested at several torso heights (all ≤ 1m box
-   * top) so shots cannot skim over cover when hugging a voxel.
+   * Fire along the free 3D path to the aim point (same freedom as the aim ray).
+   * Tracer always seeks the aim dot; only stops early if something sits strictly
+   * between muzzle and aim along that segment.
    */
   _fire(pos, aimPoint) {
     if (!aimPoint) return;
 
-    const solids = this.getSolids();
-    const enemies = this.getEnemies();
-    const bodyVis = shotBodyOrigin(pos, MUZZLE_HEIGHT);
+    const solids = this.getSolids() || [];
+    const enemies = this.getEnemies() || [];
+    const origin = shotBodyOrigin(pos, MUZZLE_HEIGHT);
 
-    let dx = aimPoint.x - bodyVis.x;
-    let dy = aimPoint.y - bodyVis.y;
-    let dz = aimPoint.z - bodyVis.z;
-    let len = Math.hypot(dx, dy, dz);
-    if (len < 1e-4) return;
-    const dirVis = { x: dx / len, y: dy / len, z: dz / len };
-    const muzzle = clampedMuzzle(bodyVis, dirVis, solids);
+    const dx = aimPoint.x - origin.x;
+    const dy = aimPoint.y - origin.y;
+    const dz = aimPoint.z - origin.z;
+    const aimDist = Math.hypot(dx, dy, dz);
+    if (aimDist < 1e-4) return;
+    const dir = { x: dx / aimDist, y: dy / aimDist, z: dz / aimDist };
+    const muzzle = clampedMuzzle(origin, dir, solids);
 
-    const occluded = solidOcclusion(pos, aimPoint, solids, len);
-    if (occluded) {
-      this._addTracer(muzzle, occluded.point, true);
-      this._addMark(occluded.point, false);
+    const eps = 0.1;
+    const hit = hitscan(origin, dir, solids, enemies, aimDist + eps);
+
+    // Blocker strictly before the aim point → stop on it.
+    if (hit.hit && hit.t < aimDist - eps) {
+      this._addTracer(muzzle, hit.point, true);
+      this._addMark(hit.point, hit.enemyIndex >= 0);
+      if (hit.enemyIndex >= 0 && typeof this.onEnemyHit === 'function') {
+        this.onEnemyHit(hit.enemyIndex);
+      }
       return;
     }
 
-    // Enemy / ground from mid torso (below box top).
-    const body = shotBodyOrigin(pos, 0.85);
-    dx = aimPoint.x - body.x;
-    dy = aimPoint.y - body.y;
-    dz = aimPoint.z - body.z;
-    len = Math.hypot(dx, dy, dz);
-    if (len < 1e-4) return;
-    const dir = { x: dx / len, y: dy / len, z: dz / len };
-
-    const aimDist = len;
-    const losEps = 0.05;
-    const hit = hitscan(
-      body,
-      dir,
-      inflateSolids(solids),
-      enemies,
-      aimDist + losEps,
-    );
-
-    const solidBlock =
-      hit.hit && hit.enemyIndex < 0 && hit.t < aimDist - losEps;
-    if (solidBlock) {
-      this._addTracer(muzzle, hit.point, true);
-      this._addMark(hit.point, false);
-      return;
-    }
-
-    if (hit.hit && hit.enemyIndex >= 0 && hit.t <= aimDist + losEps) {
-      this._addTracer(muzzle, hit.point, true);
-      this._addMark(hit.point, true);
+    // Path reaches the aim dot (clear air, or aim sits on the hit surface).
+    this._addTracer(muzzle, aimPoint, !!hit.hit);
+    if (hit.hit && hit.enemyIndex >= 0) {
+      this._addMark(aimPoint, true);
       if (typeof this.onEnemyHit === 'function') this.onEnemyHit(hit.enemyIndex);
-      return;
+    } else if (hit.hit) {
+      this._addMark(aimPoint, false);
     }
-
-    this._addTracer(muzzle, aimPoint, false);
-    if (hit.hit) this._addMark(aimPoint, false);
   }
 
   _addTracer(from, to, hit, enemy = false) {
@@ -406,8 +378,8 @@ export function hitscanWorld(origin, dir, solids, maxDist) {
   return { hit: res.hit, point: res.point, t: res.t };
 }
 
-/** Expand solid AABBs so near-touch / mesh mismatch still blocks bullets. */
-export function inflateSolids(solids, pad = SOLID_BULLET_PAD) {
+/** Expand solid AABBs (camera collision / near-touch padding). */
+export function inflateSolids(solids, pad = 0.06) {
   if (!solids?.length) return [];
   return solids.map((b) => ({
     min: { x: b.min.x - pad, y: b.min.y - pad, z: b.min.z - pad },
@@ -416,38 +388,9 @@ export function inflateSolids(solids, pad = SOLID_BULLET_PAD) {
 }
 
 /**
- * True occlusion by boxes: probe several torso heights (all ≤ 1m).
- * Each probe is a level ray toward the aim XZ (same height) so elevated aim
- * cannot skim over a 1m voxel when you are hugging it.
- */
-export function solidOcclusion(feetPos, aimPoint, solids, maxDist) {
-  const inflated = inflateSolids(solids);
-  if (!inflated.length) return null;
-
-  let best = null;
-  for (const h of BULLET_HEIGHTS) {
-    const origin = { x: feetPos.x, y: feetPos.y + h, z: feetPos.z };
-    // Level ray — blocks cover even when aiming high over a 1m box.
-    const target = { x: aimPoint.x, y: origin.y, z: aimPoint.z };
-    const dx = target.x - origin.x;
-    const dy = 0;
-    const dz = target.z - origin.z;
-    const len = Math.hypot(dx, dz);
-    if (len < 1e-4) continue;
-    const dir = { x: dx / len, y: dy, z: dz / len };
-    const dist = Math.min(maxDist ?? len, len);
-    const hit = hitscanWorld(origin, dir, inflated, dist + 0.02);
-    if (hit.hit && hit.t < dist - 0.02) {
-      if (!best || hit.t < best.t) best = hit;
-    }
-  }
-  return best;
-}
-
-/**
  * Fire origin at the actor feet + height (no forward offset).
  */
-export function shotBodyOrigin(pos, height = 0.85) {
+export function shotBodyOrigin(pos, height = MUZZLE_HEIGHT) {
   return { x: pos.x, y: pos.y + height, z: pos.z };
 }
 
