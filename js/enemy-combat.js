@@ -13,6 +13,14 @@ import { slideXZ } from './collision.js';
 /** Enemy discover / aim / shot range (slightly beyond player MAX_SHOOT_RANGE 18). */
 const ENEMY_MAX_RANGE = 20;
 const DISCOVER_RANGE = ENEMY_MAX_RANGE;
+/** Seconds between discovery rolls while in range (first check is immediate). */
+const DISCOVER_CHECK_INTERVAL = 1.0;
+/** Discover chance while standing. */
+const DISCOVER_CHANCE_STAND = 1.0;
+/** Discover chance while crouching. */
+const DISCOVER_CHANCE_CROUCH = 0.3;
+/** Discover chance while prone. */
+const DISCOVER_CHANCE_PRONE = 0.1;
 const READY_DELAY = 1.0;
 const FIRE_INTERVAL = 1.0;
 const CHASE_SPEED = 2.6;
@@ -21,10 +29,26 @@ const CHASE_STOP_DIST = ENEMY_MAX_RANGE * 0.82;
 const MUZZLE_HEIGHT = 1.35;
 const MUZZLE_FORWARD = 0.35;
 const PLAYER_CHEST = 1.15;
-/** Fraction of shots that stay on target (rest spray wide). */
-const ENEMY_ACCURACY = 0.5;
+/** Hit chance while player is standing (miss 50%). */
+const ENEMY_ACCURACY_STAND = 0.5;
+/** Hit chance while player is crouching (miss 75%). */
+const ENEMY_ACCURACY_CROUCH = 0.25;
+/** Hit chance while player is prone (miss 90%). */
+const ENEMY_ACCURACY_PRONE = 0.1;
 /** Angular error on missed shots (radians). */
 const MISS_SPREAD = 0.32;
+
+function enemyAccuracyForStance(stance) {
+  if (stance === 'prone') return ENEMY_ACCURACY_PRONE;
+  if (stance === 'crouch') return ENEMY_ACCURACY_CROUCH;
+  return ENEMY_ACCURACY_STAND;
+}
+
+function discoverChanceForStance(stance) {
+  if (stance === 'prone') return DISCOVER_CHANCE_PRONE;
+  if (stance === 'crouch') return DISCOVER_CHANCE_CROUCH;
+  return DISCOVER_CHANCE_STAND;
+}
 /** Must roughly face player to shoot (after turning). */
 const SHOOT_FACE_DOT = 0.82;
 
@@ -34,6 +58,7 @@ function ensureCombat(e) {
       alerted: false,
       readyTimer: 0,
       cooldown: 0,
+      discoverTimer: 0,
     };
   }
   return e.combat;
@@ -121,10 +146,18 @@ export class EnemyCombat {
 
       if (!c.alerted) {
         if (distXZ <= DISCOVER_RANGE) {
-          c.alerted = true;
-          c.readyTimer = READY_DELAY;
-          c.cooldown = 0;
-          turnEnemyToward(e, wantYaw, true);
+          c.discoverTimer = (c.discoverTimer ?? 0) - dt;
+          if (c.discoverTimer <= 0) {
+            c.discoverTimer = DISCOVER_CHECK_INTERVAL;
+            if (Math.random() < discoverChanceForStance(player.stance)) {
+              c.alerted = true;
+              c.readyTimer = READY_DELAY;
+              c.cooldown = 0;
+              turnEnemyToward(e, wantYaw, true);
+            }
+          }
+        } else {
+          c.discoverTimer = 0;
         }
         continue;
       }
@@ -202,8 +235,8 @@ export class EnemyCombat {
     if (len < 1e-4) return;
     let dir = { x: dx / len, y: dy / len, z: dz / len };
 
-    // 50% accurate — missed shots spray off target.
-    if (Math.random() > ENEMY_ACCURACY) {
+    // Stance lowers hit chance: stand 50%, crouch 25%, prone 10%.
+    if (Math.random() > enemyAccuracyForStance(player.stance)) {
       const yawJitter = (Math.random() - 0.5) * 2 * MISS_SPREAD;
       const pitchJitter = (Math.random() - 0.5) * 2 * MISS_SPREAD;
       dir = applySpread(dir, yawJitter, pitchJitter);
