@@ -7,7 +7,7 @@
  * A/D     — turn (camera+character; character-only with LMB; strafe with RMB)
  * LMB drag — orbit camera only (aim holds last position)
  * RMB drag — orbit camera, steer facing, aim snaps to upper-center
- * (no buttons) — aim follows mouse pointer
+ * (no buttons) — aim follows mouse pointer; character faces aim
  * Wheel   — zoom
  * Space   — jump
  * 1       — fire (hold for ~5 shots/s)

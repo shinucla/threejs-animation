@@ -681,6 +681,18 @@ function updateCharacter(delta) {
   // Aim after camera is current — mouse follow / RMB upper-center reticle.
   if (aimTarget) {
     aimTarget.updateFromScreen(camera, renderer.domElement, controls.position, controls, delta);
+    // Free mouse: turn character toward the aim point (horizontal).
+    if (!controls.lmb && !controls.rmb) {
+      const aim = aimTarget.getAimPoint();
+      if (aim) {
+        const dx = aim.x - controls.position.x;
+        const dz = aim.z - controls.position.z;
+        if (dx * dx + dz * dz > 1e-8) {
+          controls.facing = Math.atan2(dx, dz);
+          group.rotation.y = controls.facing;
+        }
+      }
+    }
   }
   updateRmbAimCursor(controls.rmb && appMode === 'run');
   if (shotSystem) {

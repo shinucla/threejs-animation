@@ -28,7 +28,7 @@ export function rmbAimClientPoint(dom) {
 
 /**
  * Shiny aim dot driven by a camera screen ray.
- * - no buttons: follow mouse pointer
+ * - no buttons: follow mouse pointer; character faces aim
  * - RMB: snap to upper-center reticle
  * - LMB only: hold last aim while orbiting
  * Dot sits on the first LOS hit (ground / boxes / enemies), else on the
