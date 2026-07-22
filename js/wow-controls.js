@@ -11,6 +11,8 @@
  * Space   — jump
  * [ / ]   — decrease / increase VPG
  */
+import { collideWithWorld } from './collision.js';
+import { getWorldSolids } from './world-solids.js';
 
 export class WowControls {
   constructor(options = {}) {
@@ -31,6 +33,10 @@ export class WowControls {
     this.zoomSensitivity = options.zoomSensitivity ?? 0.35;
     this.eyeHeight = options.eyeHeight ?? 1.0;
     this.groundY = options.groundY ?? 0;
+    /** Feet Y when the current jump began (vault reach). */
+    this.jumpStartY = 0;
+    /** Optional () => AABB[] — falls back to shared world solids registry. */
+    this.getSolids = options.getSolids ?? getWorldSolids;
 
     this.position = { x: 0, y: 0, z: 0 };
     this.facing = Math.PI;
@@ -221,41 +227,24 @@ export class WowControls {
     }
 
     this.justJumped = false;
+    let jumped = false;
     if (this.keys.has('Space') && this.onGround && this.stance !== 'prone') {
       this.stance = 'stand';
       this.velocityY = this.jumpSpeed;
       this.onGround = false;
       this.justJumped = true;
+      jumped = true;
     }
 
-    if (this.onGround) {
-      this.velocityY = 0;
-    } else {
-      this.velocityY -= this.gravity * dt;
-    }
-
-    this.position.x += this.velocityX * dt;
-    this.position.z += this.velocityZ * dt;
-    this.position.y += this.velocityY * dt;
-
-    // Never let the capsule sink below the ground plane.
-    if (this.onGround) {
-      this.position.y = this.groundY;
-      this.velocityY = 0;
-    } else if (this.velocityY <= 0 && this.position.y <= this.groundY) {
-      this.position.y = this.groundY;
-      this.velocityX = 0;
-      this.velocityY = 0;
-      this.velocityZ = 0;
-      this.onGround = true;
-    } else if (this.position.y < this.groundY) {
-      this.position.y = this.groundY;
-    }
+    const solids =
+      typeof this.getSolids === 'function' ? this.getSolids() || [] : [];
+    collideWithWorld(this, solids, dt, { jumped });
 
     this.moving = this.onGround && wantMove;
   }
 
   _onKeyDown(e) {
+    if (!this.enabled) return;
     if (e.code === 'Space') e.preventDefault();
     // VPG adjust (engine2) — keep focus from leaving / page search.
     if (e.code === 'BracketLeft' || e.code === 'BracketRight') e.preventDefault();
@@ -278,10 +267,15 @@ export class WowControls {
   }
 
   _onKeyUp(e) {
+    if (!this.enabled) {
+      this.keys.delete(e.code);
+      return;
+    }
     this.keys.delete(e.code);
   }
 
   _onPointerDown(e) {
+    if (!this.enabled) return;
     if (e.button === 0) this.lmb = true;
     if (e.button === 2) this.rmb = true;
     this.pointerX = e.clientX;
@@ -300,6 +294,7 @@ export class WowControls {
   }
 
   _onPointerMove(e) {
+    if (!this.enabled) return;
     if (!this.hasPointer) {
       this.pointerX = e.clientX;
       this.pointerY = e.clientY;
@@ -313,6 +308,7 @@ export class WowControls {
   }
 
   _onWheel(e) {
+    if (!this.enabled) return;
     e.preventDefault();
     // Browser: wheel up => negative deltaY. Accumulate so +scrollY zooms out.
     this.scrollY += Math.sign(e.deltaY);

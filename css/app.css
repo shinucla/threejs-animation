@@ -185,6 +185,32 @@ body.mode-editor #info {
   pointer-events: none;
 }
 
+.editor-hud {
+  position: fixed;
+  left: 12px;
+  bottom: 12px;
+  z-index: 30;
+  max-width: min(92vw, 720px);
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(14, 16, 20, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+  font-family: var(--mono);
+  pointer-events: none;
+  user-select: none;
+}
+
+.editor-hud[hidden] {
+  display: none !important;
+}
+
+.editor-hud kbd {
+  font-size: 10px;
+}
+
 kbd {
   display: inline-block;
   padding: 0 4px;

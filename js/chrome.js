@@ -60,14 +60,10 @@
 
   /** Show/hide chrome for a mode immediately (does not require main.js). */
   function applyModeChrome(mode) {
-    if (mode === 'editor') {
-      showToast('Editor — coming soon');
-      return false;
-    }
-
     currentMode = mode;
 
     document.body.classList.toggle('mode-blender', mode === 'blender');
+    document.body.classList.toggle('mode-editor', mode === 'editor');
     document.body.classList.toggle('mode-run', mode === 'run');
 
     if (blenderPanel) {
@@ -87,8 +83,12 @@
       addSheet.style.display = '';
     }
 
+    const editorHud = document.getElementById('editor-hud');
+    if (editorHud) editorHud.hidden = mode !== 'editor';
+
     if (modeLabel) {
-      modeLabel.textContent = mode === 'blender' ? 'Blender' : 'Run';
+      modeLabel.textContent =
+        mode === 'blender' ? 'Blender' : mode === 'editor' ? 'Editor' : 'Run';
     }
 
     for (const btn of gearMenu?.querySelectorAll('[data-mode]') || []) {

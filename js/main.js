@@ -3,7 +3,9 @@ import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
 import { WowControls } from './wow-controls.js';
 import { BlenderMode } from './blender-mode.js';
+import { EditorMode } from './editor-mode.js';
 import { VPGLayer } from './vpg-layer.js';
+import { getWorldSolidCount } from './world-solids.js';
 import {
   findSkinnedMesh,
   retargetMixamoClip,
@@ -24,7 +26,9 @@ let actions, currentAction = 'Idle';
 let controls;
 let vpgLayer;
 let lastLoggedVPG = -1;
+let lastLoggedSolids = -1;
 let blenderMode = null;
+let editorMode = null;
 let appMode = 'run';
 let soldierMesh = null;
 
@@ -84,7 +88,8 @@ function init() {
 
   controls = new WowControls({
     walkSpeed: 5,
-    jumpSpeed: 4.5,
+    // Apex ≈ v²/(2g) ≥ 1m so a single voxel is jump-onto / jump-over.
+    jumpSpeed: 5.2,
     gravity: 12,
     eyeHeight: 1.0,
   });
@@ -105,6 +110,20 @@ function init() {
     scene,
     camera,
     panel: document.getElementById('blender-panel'),
+  });
+
+  editorMode = new EditorMode({
+    scene,
+    camera,
+    domElement: renderer.domElement,
+    soldierGroup: group,
+    controls,
+    onToast: showToast,
+    onHud: updateEditorHud,
+  });
+  editorMode.init().catch((err) => {
+    console.error(err);
+    showToast(`Editor init failed: ${err.message || err}`, 6000);
   });
 
   const blenderKey = new THREE.DirectionalLight(0xfff2dd, 2.2);
@@ -142,24 +161,22 @@ function showToast(message, ms = 2200) {
 function setAppMode(mode) {
   if (!mode) return;
 
-  if (mode === 'editor') {
-    showToast('Editor — coming soon');
-    return;
-  }
-
   const changed = mode !== appMode;
   appMode = mode;
 
   document.body.classList.toggle('mode-blender', mode === 'blender');
+  document.body.classList.toggle('mode-editor', mode === 'editor');
   document.body.classList.toggle('mode-run', mode === 'run');
 
-  const runVisible = mode === 'run';
-  if (group) group.visible = runVisible;
-  if (followGroup) followGroup.visible = runVisible;
-  if (floor) floor.visible = runVisible;
-  if (scene) scene.fog = runVisible ? new THREE.Fog(0x5e5d5d, 2, 20) : null;
+  const playfieldVisible = mode === 'run' || mode === 'editor';
+  if (group) group.visible = playfieldVisible;
+  if (followGroup) followGroup.visible = playfieldVisible;
+  if (floor) floor.visible = playfieldVisible;
+  if (scene) {
+    scene.fog = playfieldVisible ? new THREE.Fog(0x5e5d5d, 2, 20) : null;
+  }
 
-  if (controls) controls.enabled = runVisible;
+  if (controls) controls.enabled = mode === 'run';
 
   if (blenderMode) {
     blenderMode.setActive(mode === 'blender');
@@ -171,9 +188,25 @@ function setAppMode(mode) {
     }
   }
 
+  if (editorMode) {
+    editorMode.setActive(mode === 'editor');
+    editorMode.setWorldVisible(playfieldVisible);
+  }
+
+  const editorHud = document.getElementById('editor-hud');
+  if (editorHud) editorHud.hidden = mode !== 'editor';
+
   if (mode === 'run' && changed && actions?.Idle) {
     crossFadeTo('Idle', 0.1);
   }
+}
+
+function updateEditorHud(info) {
+  const el = document.getElementById('editor-hud');
+  if (!el || !info) return;
+  el.textContent =
+    `tool:${info.tool} · boxes:${info.boxes} · char:${info.hasCharacter ? 'yes' : 'no'} · ` +
+    `enemies:${info.enemies} · Ctrl+S save · Ctrl+Z undo`;
 }
 
 function addFloor() {
@@ -391,12 +424,12 @@ function keepModelAboveGround() {
   }
 }
 
-function updateVpg(delta) {
-  if (!vpgLayer || !controls?.enabled) return;
+function updateVpg(delta, keySet) {
+  if (!vpgLayer || !keySet) return;
 
   let deltaVpg = 0;
-  if (controls.keys.has('BracketLeft')) deltaVpg -= VPG_NUDGE_PER_SEC * delta;
-  if (controls.keys.has('BracketRight')) deltaVpg += VPG_NUDGE_PER_SEC * delta;
+  if (keySet.has('BracketLeft')) deltaVpg -= VPG_NUDGE_PER_SEC * delta;
+  if (keySet.has('BracketRight')) deltaVpg += VPG_NUDGE_PER_SEC * delta;
   if (deltaVpg !== 0) vpgLayer.addGranularity(deltaVpg);
 
   updateVpgHud(false);
@@ -405,14 +438,22 @@ function updateVpg(delta) {
 function updateVpgHud(force) {
   if (!vpgLayer || !renderer) return;
   const v = vpgLayer.getGranularity();
-  if (!force && Math.abs(v - lastLoggedVPG) < 0.01) return;
+  const solids = getWorldSolidCount();
+  if (
+    !force &&
+    Math.abs(v - lastLoggedVPG) < 0.01 &&
+    solids === lastLoggedSolids
+  ) {
+    return;
+  }
   lastLoggedVPG = v;
+  lastLoggedSolids = solids;
 
   renderer.getDrawingBufferSize(_drawSize);
   const [vw, vh] = vpgLayer.virtualResolution(_drawSize.x, _drawSize.y);
   const el = document.getElementById('vpg');
   if (el) {
-    el.textContent = `VPG ${v.toFixed(2)} · ${vw}×${vh}`;
+    el.textContent = `VPG ${v.toFixed(2)} · ${vw}×${vh} · solids ${solids}`;
   }
 }
 
@@ -420,7 +461,7 @@ function updateCharacter(delta) {
   if (!controls || appMode !== 'run') return;
 
   controls.update(delta);
-  updateVpg(delta);
+  updateVpg(delta, controls.keys);
 
   if (controls.justJumped && actions?.Jump) {
     playJump();
@@ -445,6 +486,9 @@ function updateCharacter(delta) {
   if (mixer) mixer.update(delta);
   keepModelAboveGround();
 
+  // Keep world props animating in run mode.
+  if (editorMode) editorMode.update(delta);
+
   const camPos = controls.getCameraPosition();
   const target = controls.getTarget();
   camera.position.set(camPos.x, camPos.y, camPos.z);
@@ -463,6 +507,10 @@ function animate() {
 
   if (appMode === 'run') {
     updateCharacter(delta);
+  } else if (appMode === 'editor' && editorMode) {
+    editorMode.update(delta);
+    updateVpg(delta, editorMode.keys);
+    if (mixer) mixer.update(delta);
   } else if (appMode === 'blender' && blenderMode) {
     blenderMode.update(delta);
   }
