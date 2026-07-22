@@ -10,8 +10,16 @@ const ENEMY_RADIUS = 0.4;
 const ENEMY_HEIGHT = 1.8;
 /** Max aim + shot range along the screen ray (meters). */
 export const MAX_SHOOT_RANGE = 18;
+/** Visual / tracer height (can sit above 1m boxes). */
 const MUZZLE_HEIGHT = 1.25;
 const MUZZLE_FORWARD = 0.4;
+/**
+ * Collision cast heights — all at or below a single box top (1m) so hugging
+ * a voxel cannot skim bullets over cover.
+ */
+const BULLET_HEIGHTS = [0.4, 0.7, 0.95];
+/** Expand box AABBs for bullet tests (covers mesh/collider mismatch). */
+const SOLID_BULLET_PAD = 0.1;
 const GROUND_Y = 0;
 /** NDC Y for RMB reticle — horizontally centered, higher in the upper view. */
 const RMB_AIM_NDC_Y = 0.50;
@@ -191,72 +199,67 @@ export class ShotSystem {
   }
 
   /**
-   * Fire muzzle → aim point. Tracer reaches the aim dot when LOS is clear;
-   * otherwise stops at the first blocker (box / enemy / ground short of aim).
+   * Fire toward aim. Solids are tested at several torso heights (all ≤ 1m box
+   * top) so shots cannot skim over cover when hugging a voxel.
    */
   _fire(pos, aimPoint) {
     if (!aimPoint) return;
 
-    const muzzleY = pos.y + MUZZLE_HEIGHT;
-    let dx = aimPoint.x - pos.x;
-    let dy = aimPoint.y - muzzleY;
-    let dz = aimPoint.z - pos.z;
+    const solids = this.getSolids();
+    const enemies = this.getEnemies();
+    const bodyVis = shotBodyOrigin(pos, MUZZLE_HEIGHT);
+
+    let dx = aimPoint.x - bodyVis.x;
+    let dy = aimPoint.y - bodyVis.y;
+    let dz = aimPoint.z - bodyVis.z;
     let len = Math.hypot(dx, dy, dz);
     if (len < 1e-4) return;
-    let nx = dx / len;
-    let ny = dy / len;
-    let nz = dz / len;
+    const dirVis = { x: dx / len, y: dy / len, z: dz / len };
+    const muzzle = clampedMuzzle(bodyVis, dirVis, solids);
 
-    const origin = {
-      x: pos.x + nx * MUZZLE_FORWARD,
-      y: muzzleY,
-      z: pos.z + nz * MUZZLE_FORWARD,
-    };
-
-    dx = aimPoint.x - origin.x;
-    dy = aimPoint.y - origin.y;
-    dz = aimPoint.z - origin.z;
-    len = Math.hypot(dx, dy, dz);
-    if (len < 1e-4) return;
-    nx = dx / len;
-    ny = dy / len;
-    nz = dz / len;
-
-    const aimDist = len;
-    const losEps = 0.08;
-    const hit = hitscan(
-      origin,
-      { x: nx, y: ny, z: nz },
-      this.getSolids(),
-      this.getEnemies(),
-      aimDist + losEps,
-    );
-
-    const hitDist = Math.hypot(
-      hit.point.x - origin.x,
-      hit.point.y - origin.y,
-      hit.point.z - origin.z,
-    );
-    const blockedShort = hit.hit && hitDist < aimDist - losEps;
-
-    if (blockedShort) {
-      this._addTracer(origin, hit.point, true);
-      this._addMark(hit.point, hit.enemyIndex >= 0);
-      if (hit.enemyIndex >= 0 && typeof this.onEnemyHit === 'function') {
-        this.onEnemyHit(hit.enemyIndex);
-      }
+    const occluded = solidOcclusion(pos, aimPoint, solids, len);
+    if (occluded) {
+      this._addTracer(muzzle, occluded.point, true);
+      this._addMark(occluded.point, false);
       return;
     }
 
-    // Clear LOS — bullet reaches the aim dot.
-    this._addTracer(origin, aimPoint, false);
-    if (hit.enemyIndex >= 0 && typeof this.onEnemyHit === 'function') {
-      this.onEnemyHit(hit.enemyIndex);
-      this._addMark(aimPoint, true);
-    } else if (hit.hit) {
-      // Aim itself sits on a surface (e.g. ground / box face).
-      this._addMark(aimPoint, false);
+    // Enemy / ground from mid torso (below box top).
+    const body = shotBodyOrigin(pos, 0.85);
+    dx = aimPoint.x - body.x;
+    dy = aimPoint.y - body.y;
+    dz = aimPoint.z - body.z;
+    len = Math.hypot(dx, dy, dz);
+    if (len < 1e-4) return;
+    const dir = { x: dx / len, y: dy / len, z: dz / len };
+
+    const aimDist = len;
+    const losEps = 0.05;
+    const hit = hitscan(
+      body,
+      dir,
+      inflateSolids(solids),
+      enemies,
+      aimDist + losEps,
+    );
+
+    const solidBlock =
+      hit.hit && hit.enemyIndex < 0 && hit.t < aimDist - losEps;
+    if (solidBlock) {
+      this._addTracer(muzzle, hit.point, true);
+      this._addMark(hit.point, false);
+      return;
     }
+
+    if (hit.hit && hit.enemyIndex >= 0 && hit.t <= aimDist + losEps) {
+      this._addTracer(muzzle, hit.point, true);
+      this._addMark(hit.point, true);
+      if (typeof this.onEnemyHit === 'function') this.onEnemyHit(hit.enemyIndex);
+      return;
+    }
+
+    this._addTracer(muzzle, aimPoint, false);
+    if (hit.hit) this._addMark(aimPoint, false);
   }
 
   _addTracer(from, to, hit, enemy = false) {
@@ -323,6 +326,7 @@ export class ShotSystem {
 
 /**
  * Hitscan: enemies, then solid AABBs, then ground y=0.
+ * Solids block even when the ray starts inside a box (t = 0).
  * @returns {{ hit: boolean, point: {x:number,y:number,z:number}, enemyIndex: number, t: number }}
  */
 export function hitscan(origin, dir, solids, enemies, maxDist) {
@@ -348,7 +352,8 @@ export function hitscan(origin, dir, solids, enemies, maxDist) {
       z: e.z + ENEMY_RADIUS,
     };
     const t = rayAABB(origin, dir, min, max);
-    if (t !== null && t < bestT && t > 0) {
+    // Tiny epsilon so we don't self-hit at the muzzle.
+    if (t !== null && t < bestT && t > 1e-4) {
       bestT = t;
       hit = true;
       enemyIndex = i;
@@ -362,7 +367,8 @@ export function hitscan(origin, dir, solids, enemies, maxDist) {
 
   for (const box of solids || []) {
     const t = rayAABB(origin, dir, box.min, box.max);
-    if (t !== null && t < bestT && t > 0) {
+    // Include t === 0 when the ray starts inside a box (blocks pass-through).
+    if (t !== null && t < bestT && t >= 0) {
       bestT = t;
       hit = true;
       enemyIndex = -1;
@@ -376,7 +382,7 @@ export function hitscan(origin, dir, solids, enemies, maxDist) {
 
   if (Math.abs(dir.y) > 1e-8) {
     const t = (GROUND_Y - origin.y) / dir.y;
-    if (t > 0 && t < bestT) {
+    if (t > 1e-4 && t < bestT) {
       bestT = t;
       hit = true;
       enemyIndex = -1;
@@ -400,6 +406,73 @@ export function hitscanWorld(origin, dir, solids, maxDist) {
   return { hit: res.hit, point: res.point, t: res.t };
 }
 
+/** Expand solid AABBs so near-touch / mesh mismatch still blocks bullets. */
+export function inflateSolids(solids, pad = SOLID_BULLET_PAD) {
+  if (!solids?.length) return [];
+  return solids.map((b) => ({
+    min: { x: b.min.x - pad, y: b.min.y - pad, z: b.min.z - pad },
+    max: { x: b.max.x + pad, y: b.max.y + pad, z: b.max.z + pad },
+  }));
+}
+
+/**
+ * True occlusion by boxes: probe several torso heights (all ≤ 1m).
+ * Each probe is a level ray toward the aim XZ (same height) so elevated aim
+ * cannot skim over a 1m voxel when you are hugging it.
+ */
+export function solidOcclusion(feetPos, aimPoint, solids, maxDist) {
+  const inflated = inflateSolids(solids);
+  if (!inflated.length) return null;
+
+  let best = null;
+  for (const h of BULLET_HEIGHTS) {
+    const origin = { x: feetPos.x, y: feetPos.y + h, z: feetPos.z };
+    // Level ray — blocks cover even when aiming high over a 1m box.
+    const target = { x: aimPoint.x, y: origin.y, z: aimPoint.z };
+    const dx = target.x - origin.x;
+    const dy = 0;
+    const dz = target.z - origin.z;
+    const len = Math.hypot(dx, dz);
+    if (len < 1e-4) continue;
+    const dir = { x: dx / len, y: dy, z: dz / len };
+    const dist = Math.min(maxDist ?? len, len);
+    const hit = hitscanWorld(origin, dir, inflated, dist + 0.02);
+    if (hit.hit && hit.t < dist - 0.02) {
+      if (!best || hit.t < best.t) best = hit;
+    }
+  }
+  return best;
+}
+
+/**
+ * Fire origin at the actor feet + height (no forward offset).
+ */
+export function shotBodyOrigin(pos, height = 0.85) {
+  return { x: pos.x, y: pos.y + height, z: pos.z };
+}
+
+/**
+ * Visual muzzle along aim dir, clamped so it never starts past / inside a box.
+ */
+export function clampedMuzzle(bodyOrigin, dir, solids, forward = MUZZLE_FORWARD) {
+  const world = hitscanWorld(bodyOrigin, dir, solids || [], forward + 0.05);
+  if (world.hit && world.t <= forward) {
+    const t = Math.max(0, world.t - 0.02);
+    return {
+      x: bodyOrigin.x + dir.x * t,
+      y: bodyOrigin.y + dir.y * t,
+      z: bodyOrigin.z + dir.z * t,
+    };
+  }
+  const m = {
+    x: bodyOrigin.x + dir.x * forward,
+    y: bodyOrigin.y + dir.y * forward,
+    z: bodyOrigin.z + dir.z * forward,
+  };
+  if (pointInSolids(m, solids)) return { ...bodyOrigin };
+  return m;
+}
+
 /**
  * Player body AABB along a ray.
  * @returns {number|null} hit distance or null
@@ -417,11 +490,35 @@ export function rayHitPlayer(origin, dir, playerPos, maxDist) {
     z: playerPos.z + ENEMY_RADIUS,
   };
   const t = rayAABB(origin, dir, min, max);
-  if (t === null || t < 0 || t > maxDist) return null;
+  if (t === null || t < 1e-4 || t > maxDist) return null;
   return t;
 }
 
+function pointInAABB(p, min, max) {
+  return (
+    p.x >= min.x &&
+    p.x <= max.x &&
+    p.y >= min.y &&
+    p.y <= max.y &&
+    p.z >= min.z &&
+    p.z <= max.z
+  );
+}
+
+function pointInSolids(p, solids) {
+  for (const box of solids || []) {
+    if (pointInAABB(p, box.min, box.max)) return true;
+  }
+  return false;
+}
+
+/**
+ * Ray ↔ AABB. Returns entry distance along dir.
+ * If the origin is inside the box, returns 0 so the solid still blocks.
+ */
 function rayAABB(origin, dir, min, max) {
+  if (pointInAABB(origin, min, max)) return 0;
+
   let tmin = 0;
   let tmax = Infinity;
   const axes = ['x', 'y', 'z'];
@@ -445,5 +542,6 @@ function rayAABB(origin, dir, min, max) {
     tmax = Math.min(tmax, t2);
     if (tmin > tmax) return null;
   }
-  return tmin >= 0 ? tmin : tmax >= 0 ? tmax : null;
+  if (tmax < 0) return null;
+  return tmin >= 0 ? tmin : null;
 }

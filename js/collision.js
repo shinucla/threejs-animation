@@ -242,3 +242,54 @@ export function collideWithWorld(ctrl, solids, dt, opts = {}) {
     ctrl.onGround = false;
   }
 }
+
+/**
+ * Slide-move on X then Z; blocked by solids (same rules as walking, no vault).
+ * @returns {{ x: number, y: number, z: number }}
+ */
+export function slideXZ(position, dx, dz, solids, opts = {}) {
+  const r = opts.radius ?? COLLIDER_RADIUS;
+  const h = opts.height ?? 1.65;
+  const pos = { x: position.x, y: position.y, z: position.z };
+
+  pos.x += dx;
+  resolveSlideHorizontal(pos, solids || [], true, r, h);
+  pos.z += dz;
+  resolveSlideHorizontal(pos, solids || [], false, r, h);
+
+  return pos;
+}
+
+function resolveSlideHorizontal(pos, solids, axisX, r, h) {
+  const feet = pos.y + SKIN;
+  const head = pos.y + h;
+
+  for (const b of solids) {
+    if (feet >= b.max.y - SKIN) continue;
+    if (b.min.y >= head || b.max.y <= pos.y) continue;
+
+    const body = {
+      min: { x: pos.x - r, y: pos.y, z: pos.z - r },
+      max: { x: pos.x + r, y: head, z: pos.z + r },
+    };
+    if (!aabbOverlap(body, b)) continue;
+
+    const step = b.max.y - pos.y;
+    if (step > 0 && step <= MAX_STEP_HEIGHT && xzOverlap(pos.x, pos.z, r, b)) {
+      pos.y = b.max.y;
+      continue;
+    }
+
+    if (axisX) {
+      const penL = body.max.x - b.min.x;
+      const penR = b.max.x - body.min.x;
+      if (penL < penR) pos.x -= penL;
+      else pos.x += penR;
+    } else {
+      const penL = body.max.z - b.min.z;
+      const penR = b.max.z - body.min.z;
+      if (penL < penR) pos.z -= penL;
+      else pos.z += penR;
+    }
+  }
+}

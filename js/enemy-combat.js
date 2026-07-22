@@ -6,7 +6,12 @@ import {
   MAX_SHOOT_RANGE,
   hitscanWorld,
   rayHitPlayer,
+  shotBodyOrigin,
+  clampedMuzzle,
+  solidOcclusion,
+  inflateSolids,
 } from './shooting.js';
+import { slideXZ } from './collision.js';
 
 const DISCOVER_RANGE = MAX_SHOOT_RANGE * 1.15;
 const READY_DELAY = 1.0;
@@ -17,9 +22,10 @@ const CHASE_STOP_DIST = MAX_SHOOT_RANGE * 0.82;
 const MUZZLE_HEIGHT = 1.35;
 const MUZZLE_FORWARD = 0.35;
 const PLAYER_CHEST = 1.15;
-const TIMING_MISS_CHANCE = 0.18;
-const SPREAD_BASE = 0.025;
-const SPREAD_PER_M = 0.012;
+/** Fraction of shots that stay on target (rest spray wide). */
+const ENEMY_ACCURACY = 0.5;
+/** Angular error on missed shots (radians). */
+const MISS_SPREAD = 0.32;
 /** Must roughly face player to shoot (after turning). */
 const SHOOT_FACE_DOT = 0.82;
 
@@ -52,18 +58,8 @@ function syncEnemy(e, pos) {
   }
 }
 
-/** Stormtrooper GLB faces local −Z at rotation.y = 0 (not Mixamo +Z). */
 function enemyForward(yaw) {
   return { x: -Math.sin(yaw), z: -Math.cos(yaw) };
-}
-
-function muzzlePos(pos, yaw) {
-  const f = enemyForward(yaw);
-  return {
-    x: pos.x + f.x * MUZZLE_FORWARD,
-    y: pos.y + MUZZLE_HEIGHT,
-    z: pos.z + f.z * MUZZLE_FORWARD,
-  };
 }
 
 function yawTo(dx, dz) {
@@ -146,12 +142,11 @@ export class EnemyCombat {
       const fwd = enemyForward(e.yaw);
       const facingDot = fwd.x * toX + fwd.z * toZ;
 
-      // Chase when too far to shoot reliably.
+      // Chase when too far to shoot reliably (slide against boxes).
       if (distXZ > CHASE_STOP_DIST) {
         const step = Math.min(CHASE_SPEED * dt, distXZ - CHASE_STOP_DIST);
-        const nx = pos.x + toX * step;
-        const nz = pos.z + toZ * step;
-        syncEnemy(e, { x: nx, y: pos.y, z: nz });
+        const moved = slideXZ(pos, toX * step, toZ * step, solids);
+        syncEnemy(e, moved);
       }
 
       const canShoot =
@@ -176,67 +171,76 @@ export class EnemyCombat {
 
   _hasLos(e, player, solids) {
     const pos = enemyPos(e);
-    const origin = muzzlePos(pos, e.yaw);
     const target = {
       x: player.x,
       y: player.y + PLAYER_CHEST,
       z: player.z,
     };
-    const dx = target.x - origin.x;
-    const dy = target.y - origin.y;
-    const dz = target.z - origin.z;
-    const len = Math.hypot(dx, dy, dz);
-    if (len < 1e-4) return true;
-    const dir = { x: dx / len, y: dy / len, z: dz / len };
-    const world = hitscanWorld(origin, dir, solids, len - 0.08);
-    return !world.hit;
+    return !solidOcclusion(pos, target, solids);
   }
 
   _shoot(e, player, solids, distXZ) {
     const pos = enemyPos(e);
-    const origin = muzzlePos(pos, e.yaw);
     const target = {
       x: player.x,
       y: player.y + PLAYER_CHEST,
       z: player.z,
     };
 
-    let dx = target.x - origin.x;
-    let dy = target.y - origin.y;
-    let dz = target.z - origin.z;
+    // Boxes block before accuracy / player test (multi-height, below box tops).
+    const occluded = solidOcclusion(pos, target, solids);
+    if (occluded) {
+      const bodyVis = shotBodyOrigin(pos, MUZZLE_HEIGHT);
+      const dx0 = target.x - bodyVis.x;
+      const dy0 = target.y - bodyVis.y;
+      const dz0 = target.z - bodyVis.z;
+      const len0 = Math.hypot(dx0, dy0, dz0) || 1;
+      const dir0 = { x: dx0 / len0, y: dy0 / len0, z: dz0 / len0 };
+      const muzzle = clampedMuzzle(bodyVis, dir0, solids, MUZZLE_FORWARD);
+      this.shotSystem.addShot(muzzle, occluded.point, true, false, true);
+      return;
+    }
+
+    const body = shotBodyOrigin(pos, 0.85);
+    let dx = target.x - body.x;
+    let dy = target.y - body.y;
+    let dz = target.z - body.z;
     let len = Math.hypot(dx, dy, dz);
     if (len < 1e-4) return;
     let dir = { x: dx / len, y: dy / len, z: dz / len };
 
-    const spread = SPREAD_BASE + distXZ * SPREAD_PER_M;
-    const timingMiss = Math.random() < TIMING_MISS_CHANCE;
-    const yawJitter = (Math.random() - 0.5) * 2 * spread * (timingMiss ? 3.5 : 1);
-    const pitchJitter = (Math.random() - 0.5) * 2 * spread * (timingMiss ? 3.5 : 1);
-    dir = applySpread(dir, yawJitter, pitchJitter);
+    // 50% accurate — missed shots spray off target.
+    if (Math.random() > ENEMY_ACCURACY) {
+      const yawJitter = (Math.random() - 0.5) * 2 * MISS_SPREAD;
+      const pitchJitter = (Math.random() - 0.5) * 2 * MISS_SPREAD;
+      dir = applySpread(dir, yawJitter, pitchJitter);
+    }
 
     const maxDist = Math.min(MAX_SHOOT_RANGE, Math.max(len + 4, 6));
-    const world = hitscanWorld(origin, dir, solids, maxDist);
-    const playerT = rayHitPlayer(origin, dir, player, maxDist);
+    const world = hitscanWorld(body, dir, inflateSolids(solids), maxDist);
+    const playerT = rayHitPlayer(body, dir, player, maxDist);
+    const bodyVis = shotBodyOrigin(pos, MUZZLE_HEIGHT);
+    const muzzle = clampedMuzzle(bodyVis, dir, solids, MUZZLE_FORWARD);
 
     let end = world.hit
       ? world.point
       : {
-          x: origin.x + dir.x * maxDist,
-          y: origin.y + dir.y * maxDist,
-          z: origin.z + dir.z * maxDist,
+          x: body.x + dir.x * maxDist,
+          y: body.y + dir.y * maxDist,
+          z: body.z + dir.z * maxDist,
         };
     let hitPlayer = false;
 
     if (playerT !== null && (!world.hit || playerT < world.t)) {
       end = {
-        x: origin.x + dir.x * playerT,
-        y: origin.y + dir.y * playerT,
-        z: origin.z + dir.z * playerT,
+        x: body.x + dir.x * playerT,
+        y: body.y + dir.y * playerT,
+        z: body.z + dir.z * playerT,
       };
       hitPlayer = true;
     }
 
-    this.shotSystem.addShot(origin, end, hitPlayer || world.hit, hitPlayer, true);
+    this.shotSystem.addShot(muzzle, end, hitPlayer || world.hit, hitPlayer, true);
 
     if (hitPlayer && typeof this.onPlayerHit === 'function') {
       const damage = Math.max(6, Math.round(14 - distXZ * 0.35));
