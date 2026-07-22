@@ -182,6 +182,7 @@ function init() {
   });
   controls.attach(renderer.domElement);
   controls.distance = 5;
+  controls.cameraDistance = 5;
   // Camera behind on −Z; Mixamo mesh faces +Z, so facing=0 shows the back.
   controls.yaw = Math.PI;
   controls.pitch = 0.45;

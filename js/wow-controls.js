@@ -15,6 +15,7 @@
  */
 import { collideWithWorld } from './collision.js';
 import { getWorldSolids } from './world-solids.js';
+import { hitscanWorld, inflateSolids } from './shooting.js';
 
 export class WowControls {
   constructor(options = {}) {
@@ -23,6 +24,15 @@ export class WowControls {
     this.distance = 5;
     this.minDistance = 1.5;
     this.maxDistance = 12;
+    /**
+     * Actual camera distance after LOS pull-in (smoothly follows clearDist).
+     * Ideal orbit distance stays in `distance` (wheel zoom).
+     */
+    this.cameraDistance = 5;
+    /** Closest the camera may pull in when blocked. */
+    this.minCollisionDistance = options.minCollisionDistance ?? 0.55;
+    /** Skin so the lens sits just in front of a hit surface. */
+    this.cameraCollisionSkin = options.cameraCollisionSkin ?? 0.22;
     // Pitch is elevation from horizontal; keep camera ≥15° above the ground plane.
     this.minPitch = options.minPitch ?? Math.PI / 12;
     this.maxPitch = options.maxPitch ?? 1.45;
@@ -115,15 +125,54 @@ export class WowControls {
     };
   }
 
-  /** Camera eye position from spherical orbit params. */
-  getCameraPosition() {
-    const target = this.getTarget();
+  /** Unit direction from look-at target toward the ideal orbit camera. */
+  getCameraOrbitDir() {
     const cp = Math.cos(this.pitch);
     return {
-      x: target.x + Math.sin(this.yaw) * cp * this.distance,
-      y: target.y + Math.sin(this.pitch) * this.distance,
-      z: target.z + Math.cos(this.yaw) * cp * this.distance,
+      x: Math.sin(this.yaw) * cp,
+      y: Math.sin(this.pitch),
+      z: Math.cos(this.yaw) * cp,
     };
+  }
+
+  /** Camera eye position (LOS-adjusted distance). */
+  getCameraPosition() {
+    const target = this.getTarget();
+    const dir = this.getCameraOrbitDir();
+    const d = this.cameraDistance;
+    return {
+      x: target.x + dir.x * d,
+      y: target.y + dir.y * d,
+      z: target.z + dir.z * d,
+    };
+  }
+
+  /**
+   * Pull camera in along player→camera when boxes block LOS; ease back out
+   * when the path is clear again.
+   */
+  _updateCameraCollision(dt) {
+    const target = this.getTarget();
+    const dir = this.getCameraOrbitDir();
+    const desired = this.distance;
+    const solids = typeof this.getSolids === 'function' ? this.getSolids() || [] : [];
+    const inflated = inflateSolids(solids, 0.06);
+
+    let clearDist = desired;
+    if (inflated.length) {
+      const hit = hitscanWorld(target, dir, inflated, desired);
+      if (hit.hit && hit.t < desired - 0.01) {
+        clearDist = Math.max(
+          this.minCollisionDistance,
+          hit.t - this.cameraCollisionSkin,
+        );
+      }
+    }
+
+    // Snap in quickly when blocked; ease out ("bounce back") when clear.
+    const speed = clearDist < this.cameraDistance - 0.01 ? 22 : 6;
+    const k = 1 - Math.exp(-speed * dt);
+    this.cameraDistance += (clearDist - this.cameraDistance) * k;
   }
 
   update(dt) {
@@ -164,6 +213,9 @@ export class WowControls {
     if (this.rmb) {
       this.facing = this.yaw + Math.PI;
     }
+
+    // Keep player↔camera LOS: pull in through cover, ease back when clear.
+    this._updateCameraCollision(dt);
 
     // A/D turn unless RMB (then A/D strafe with movement).
     if (!this.rmb) {
