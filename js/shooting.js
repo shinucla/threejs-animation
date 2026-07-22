@@ -4,18 +4,17 @@
 import * as THREE from 'three';
 
 const FIRE_INTERVAL = 1 / 5;
-const SHOT_RANGE = 80;
 const TRACER_LIFE = 0.12;
 const MARK_LIFE = 0.35;
 const ENEMY_RADIUS = 0.4;
 const ENEMY_HEIGHT = 1.8;
-/** Aim marker max distance along the screen ray (meters). */
-const AIM_DIST = 30;
+/** Max aim + shot range along the screen ray (meters). */
+const MAX_SHOOT_RANGE = 18;
 const MUZZLE_HEIGHT = 1.25;
 const MUZZLE_FORWARD = 0.4;
 const GROUND_Y = 0;
-/** NDC Y for RMB reticle — horizontally centered, upper half of the view. */
-const RMB_AIM_NDC_Y = 0.35;
+/** NDC Y for RMB reticle — horizontally centered, higher in the upper view. */
+const RMB_AIM_NDC_Y = 0.50;
 
 /**
  * Shiny aim dot driven by a camera screen ray.
@@ -23,7 +22,7 @@ const RMB_AIM_NDC_Y = 0.35;
  * - RMB: snap to upper-center reticle
  * - LMB only: hold last aim while orbiting
  * Dot sits on the first LOS hit (ground / boxes / enemies), else on the
- * AIM_DIST sphere along the aim ray.
+ * MAX_SHOOT_RANGE sphere along the aim ray.
  */
 export class AimTarget {
   /**
@@ -124,13 +123,13 @@ export class AimTarget {
 
       const rayOrigin = { x: origin.x, y: origin.y, z: origin.z };
       const rayDir = { x: dir.x, y: dir.y, z: dir.z };
-      // Hitscan: first surface within AIM_DIST, else point on the max-range sphere.
+      // Hitscan: first surface within MAX_SHOOT_RANGE, else point on the max-range sphere.
       const res = hitscan(
         rayOrigin,
         rayDir,
         this.getSolids(),
         this.getEnemies(),
-        AIM_DIST,
+        MAX_SHOOT_RANGE,
       );
       this.mesh.position.set(res.point.x, res.point.y, res.point.z);
     }
