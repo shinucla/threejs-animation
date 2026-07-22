@@ -22,9 +22,17 @@ const RMB_AIM_NDC_Y = 0.35;
  * - no buttons: follow mouse pointer
  * - RMB: snap to upper-center reticle
  * - LMB only: hold last aim while orbiting
+ * Dot sits on the first LOS hit (ground / boxes / enemies), else on the
+ * AIM_DIST sphere along the aim ray.
  */
 export class AimTarget {
-  constructor(scene) {
+  /**
+   * @param {THREE.Scene} scene
+   * @param {{ getSolids?: () => any[], getEnemies?: () => any[] }} [opts]
+   */
+  constructor(scene, opts = {}) {
+    this.getSolids = opts.getSolids ?? (() => []);
+    this.getEnemies = opts.getEnemies ?? (() => []);
     const core = new THREE.Mesh(
       new THREE.SphereGeometry(0.09, 20, 20),
       new THREE.MeshStandardMaterial({
@@ -76,11 +84,11 @@ export class AimTarget {
   /**
    * @param {THREE.Camera} camera
    * @param {HTMLElement} dom
-   * @param {{x:number,y:number,z:number}} playerPos feet
+   * @param {{x:number,y:number,z:number}} _playerPos unused (kept for call-site compat)
    * @param {{ lmb: boolean, rmb: boolean, pointerX: number, pointerY: number }} pointer
    * @param {number} dt
    */
-  updateFromScreen(camera, dom, playerPos, pointer, dt = 0) {
+  updateFromScreen(camera, dom, _playerPos, pointer, dt = 0) {
     this._t += dt;
 
     const rect = dom.getBoundingClientRect();
@@ -114,17 +122,17 @@ export class AimTarget {
       this.aimDir = { x: dir.x, y: dir.y, z: dir.z };
       this._hasAim = true;
 
-      let dist = AIM_DIST;
-      if (dir.y < -1e-6) {
-        const tGround = (GROUND_Y - origin.y) / dir.y;
-        if (tGround > 0 && tGround < dist) dist = tGround;
-      }
-
-      this.mesh.position.set(
-        origin.x + dir.x * dist,
-        origin.y + dir.y * dist,
-        origin.z + dir.z * dist,
+      const rayOrigin = { x: origin.x, y: origin.y, z: origin.z };
+      const rayDir = { x: dir.x, y: dir.y, z: dir.z };
+      // Hitscan: first surface within AIM_DIST, else point on the max-range sphere.
+      const res = hitscan(
+        rayOrigin,
+        rayDir,
+        this.getSolids(),
+        this.getEnemies(),
+        AIM_DIST,
       );
+      this.mesh.position.set(res.point.x, res.point.y, res.point.z);
     }
 
     this._mat.emissiveIntensity = 2.2 + Math.sin(this._t * 6) * 0.7;

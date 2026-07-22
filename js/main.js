@@ -183,7 +183,10 @@ function init() {
   controls.pitch = 0.45;
   controls.facing = 0;
 
-  aimTarget = new AimTarget(scene);
+  aimTarget = new AimTarget(scene, {
+    getSolids: getWorldSolids,
+    getEnemies: () => editorMode?.enemies ?? [],
+  });
   shotSystem = new ShotSystem(scene, {
     getSolids: getWorldSolids,
     getEnemies: () => editorMode?.enemies ?? [],
