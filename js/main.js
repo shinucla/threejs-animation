@@ -674,9 +674,22 @@ function updateCharacter(delta) {
   if (editorMode) editorMode.update(delta);
 
   const camPos = controls.getCameraPosition();
-  const target = controls.getTarget();
+  const target = controls.getCameraLookAt();
   camera.position.set(camPos.x, camPos.y, camPos.z);
   camera.lookAt(target.x, target.y, target.z);
+
+  // FPS: hide body so the lens isn't inside the mesh; keep the gun visible.
+  const fps = controls.isFirstPerson();
+  if (model) {
+    model.traverse((obj) => {
+      if (obj.isMesh) obj.visible = !fps;
+    });
+  }
+  if (fps && weapon) {
+    weapon.traverse((obj) => {
+      if (obj.isMesh) obj.visible = true;
+    });
+  }
 
   // Aim after camera is current — mouse follow / RMB upper-center reticle.
   if (aimTarget) {

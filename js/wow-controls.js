@@ -8,7 +8,7 @@
  * LMB drag — orbit camera only (aim holds last position)
  * RMB drag — orbit camera, steer facing, aim snaps to upper-center
  * (no buttons) — aim follows mouse pointer; character faces aim
- * Wheel   — zoom
+ * Wheel   — zoom (max in = first-person at head)
  * Space   — jump
  * 1       — fire (hold for ~5 shots/s)
  * [ / ]   — decrease / increase VPG
@@ -22,20 +22,27 @@ export class WowControls {
     this.yaw = Math.PI;
     this.pitch = 0.55;
     this.distance = 5;
-    this.minDistance = 1.5;
+    /** Allow wheel zoom all the way to the head (0 = front-of-head FPS). */
+    this.minDistance = 0;
     this.maxDistance = 12;
     /**
      * Actual camera distance after LOS pull-in (smoothly follows clearDist).
      * Ideal orbit distance stays in `distance` (wheel zoom).
      */
     this.cameraDistance = 5;
-    /** Closest the camera may pull in when blocked. */
-    this.minCollisionDistance = options.minCollisionDistance ?? 0.55;
+    /** Closest the camera may pull in when blocked (0 = into head). */
+    this.minCollisionDistance = 0;
     /** Skin so the lens sits just in front of a hit surface. */
     this.cameraCollisionSkin = options.cameraCollisionSkin ?? 0.22;
+    /** FPS eye height (meters) — approx head / eyes. */
+    this.headEyeHeight = options.headEyeHeight ?? 1.55;
+    /** FPS: lens sits this far in front of the eyes along the view. */
+    this.headFrontOffset = options.headFrontOffset ?? 0.18;
     // Pitch is elevation from horizontal; keep camera ≥15° above the ground plane.
     this.minPitch = options.minPitch ?? Math.PI / 12;
     this.maxPitch = options.maxPitch ?? 1.45;
+    /** In FPS, allow looking closer to horizontal / slightly up. */
+    this.fpsMinPitch = options.fpsMinPitch ?? -0.35;
 
     this.walkSpeed = options.walkSpeed ?? 1.8;
     this.jumpSpeed = options.jumpSpeed ?? 4.5;
@@ -121,13 +128,19 @@ export class WowControls {
     document.removeEventListener('pointerlockchange', this._onPointerLockChange);
   }
 
-  /** Eye / look-at target for the orbit camera. */
+  /** Eye / look-at target for the orbit camera (FPS uses head height). */
   getTarget() {
+    const h = this.isFirstPerson() ? this.headEyeHeight : this.eyeHeight;
     return {
       x: this.position.x,
-      y: this.position.y + this.eyeHeight,
+      y: this.position.y + h,
       z: this.position.z,
     };
+  }
+
+  /** Max zoom-in: first-person at the front of the head. */
+  isFirstPerson() {
+    return this.distance <= 1e-3;
   }
 
   /** Unit direction from look-at target toward the ideal orbit camera. */
@@ -140,8 +153,24 @@ export class WowControls {
     };
   }
 
+  /** World look direction (from camera into the scene). */
+  getViewDir() {
+    const d = this.getCameraOrbitDir();
+    return { x: -d.x, y: -d.y, z: -d.z };
+  }
+
   /** Camera eye position (LOS-adjusted distance). */
   getCameraPosition() {
+    if (this.isFirstPerson()) {
+      const eye = this.getTarget();
+      const view = this.getViewDir();
+      const n = this.headFrontOffset;
+      return {
+        x: eye.x + view.x * n,
+        y: eye.y + view.y * n,
+        z: eye.z + view.z * n,
+      };
+    }
     const target = this.getTarget();
     const dir = this.getCameraOrbitDir();
     const d = this.cameraDistance;
@@ -153,10 +182,30 @@ export class WowControls {
   }
 
   /**
+   * Look-at point for the camera. FPS looks along the view axis from the eyes.
+   */
+  getCameraLookAt() {
+    if (this.isFirstPerson()) {
+      const cam = this.getCameraPosition();
+      const view = this.getViewDir();
+      return {
+        x: cam.x + view.x,
+        y: cam.y + view.y,
+        z: cam.z + view.z,
+      };
+    }
+    return this.getTarget();
+  }
+
+  /**
    * Pull camera in along player→camera when boxes block LOS; ease back out
    * when the path is clear again.
    */
   _updateCameraCollision(dt) {
+    if (this.isFirstPerson()) {
+      this.cameraDistance = 0;
+      return;
+    }
     const target = this.getTarget();
     const dir = this.getCameraOrbitDir();
     const desired = this.distance;
@@ -209,13 +258,17 @@ export class WowControls {
       this.yaw -= this.deltaX * this.orbitSensitivity;
       this.pitch += this.deltaY * this.orbitSensitivity;
     }
-    this.pitch = clamp(this.pitch, this.minPitch, this.maxPitch);
+    this.pitch = clamp(
+      this.pitch,
+      this.isFirstPerson() ? this.fpsMinPitch : this.minPitch,
+      this.maxPitch,
+    );
     this.deltaX = 0;
     this.deltaY = 0;
 
-    // RMB drag steers facing with the camera. Camera yaw is π behind the
+    // RMB / FPS: steer facing with the camera. Camera yaw is π behind the
     // character's Mixamo +Z facing, so keep that offset when locking them.
-    if (this.rmb) {
+    if (this.rmb || this.isFirstPerson()) {
       this.facing = this.yaw + Math.PI;
     }
 
