@@ -40,7 +40,85 @@ const ANIM_SOURCES = {
   Prone: 'assets/animations/mixamo-prone.fbx',
 };
 
+const WEAPON_URL = 'assets/models/AK-47.fbx';
+
+let weapon = null;
+
 init();
+
+function findBoneByNames(root, names) {
+  const want = new Set(names);
+  let found = null;
+  root.traverse((obj) => {
+    if (found || !obj.isBone) return;
+    if (want.has(obj.name)) found = obj;
+  });
+  return found;
+}
+
+/** Grip in Mixamo RightHand cm space (rotation tuned by hand). */
+function applyAkGrip(gun) {
+  const m = new THREE.Matrix4()
+    .makeTranslation(2, 6, 4)
+    .multiply(new THREE.Matrix4().makeRotationX(-PI90 * 1.0))
+    .multiply(new THREE.Matrix4().makeRotationZ(-PI90 * 1.0))
+    .multiply(new THREE.Matrix4().makeRotationY(-PI90 * 1.0));
+  const pos = new THREE.Vector3();
+  const quat = new THREE.Quaternion();
+  const scl = new THREE.Vector3();
+  m.decompose(pos, quat, scl);
+  gun.position.copy(pos);
+  gun.quaternion.copy(quat);
+  // Mesh pivot is not at the pistol grip — slide along barrel (~forearm length)
+  // so the handle sits in the hand instead of near the elbow.
+    gun.translateZ(-1);
+    gun.translateX(25);
+}
+
+/**
+ * Parent a static prop to the Mixamo right hand.
+ * Soldier root is scaled 0.01 (cm→m); bone-local units stay in cm.
+ */
+async function mountAk47(soldierRoot) {
+  const hand = findBoneByNames(soldierRoot, [
+    'mixamorigRightHand',
+    'RightHand',
+    'mixamorig_RightHand',
+  ]);
+  if (!hand) throw new Error('RightHand bone not found on soldier');
+
+  const gun = await loadFbx(WEAPON_URL);
+  sanitizeTree(gun);
+
+  gun.updateMatrixWorld(true);
+  const size = new THREE.Box3().setFromObject(gun).getSize(new THREE.Vector3());
+  const longest = Math.max(size.x, size.y, size.z, 1e-3);
+  // 140cm * 2/3 ≈ 93cm bone-local after the 2× upsizing.
+  const targetCm = 93;
+  if (longest < 5) {
+    // Authored in meters.
+    gun.scale.multiplyScalar((targetCm / longest) * 100);
+  } else {
+    gun.scale.multiplyScalar(targetCm / longest);
+  }
+
+  gun.traverse((obj) => {
+    if (!obj.isMesh) return;
+    obj.castShadow = true;
+    obj.receiveShadow = true;
+    const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+    for (const m of mats) {
+      if (!m) continue;
+      m.side = THREE.DoubleSide;
+      if (m.map) m.map.colorSpace = THREE.SRGBColorSpace;
+    }
+  });
+
+  hand.add(gun);
+  applyAkGrip(gun);
+  weapon = gun;
+  return gun;
+}
 
 function init() {
   const container = document.getElementById('container');
@@ -347,6 +425,14 @@ async function loadSoldier() {
 
     actions.Idle.play();
     currentAction = 'Idle';
+
+    try {
+      await mountAk47(model);
+    } catch (weaponErr) {
+      console.warn(weaponErr);
+      showToast(`AK-47 mount failed: ${weaponErr.message || weaponErr}`, 5000);
+    }
+
     showToast('t-soldier ready');
   } catch (err) {
     console.error(err);
